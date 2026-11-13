@@ -1,0 +1,20 @@
+# يُنقل هذا الملف إلى .github/workflows/ci.yml لتفعيل الاختبار الآلي.
+name: الاختبارات
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: البناء
+        run: CC=gcc ./build.sh
+      - name: اختبارات الوحدة
+        run: gcc -O1 -w -o unit tests/unit_test.c core/simd.c core/devices.c core/fdt.c -lm && ./unit
+      - name: اختبار الإقلاع
+        run: ./tests/boot_test.sh
+      - name: حفظ سجل الإقلاع
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-log
+          path: /tmp/gtv-emu-test/boot.log
