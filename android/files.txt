@@ -63,3 +63,6 @@ VENDOR/lib64/libgralloctypes.so
 SYSTEM/bin/crash_dump64
 SYSTEM/bin/debuggerd
 SYSTEM/bin/tombstoned
+SYSTEM/bin/bootanimation
+SYSTEM/framework/framework-res.apk
+SYSTEM/etc/init/bootanim.rc
