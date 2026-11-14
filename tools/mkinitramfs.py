@@ -18,7 +18,7 @@ INIT = r'''#!/bin/busybox sh
 export PATH=/bin:/sbin
 mount -t proc proc /proc
 mount -t sysfs sys /sys
-mount -t devtmpfs dev /dev 2>/dev/null
+mount -t devtmpfs dev /dev 2>/dev/null || { mount -t tmpfs dev /dev; mdev -s; echo "dev: tmpfs+mdev"; }
 echo
 echo "=== gtv-emu: shell ready ==="
 uname -a
