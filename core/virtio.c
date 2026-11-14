@@ -172,6 +172,7 @@ typedef struct {
     uint32_t sx, sy, sw, sh;
     uint64_t flushes;
     int announced;
+    GpuRes last;                   /* آخر إطار عُرض قبل إيقاف الشاشة، للقطة الشاشة */
 } Gpu;
 
 static Gpu *g_gpu;
@@ -179,6 +180,16 @@ static Gpu *g_gpu;
 static GpuRes *gpu_find(Gpu *g, uint32_t id) {
     for (int i = 0; i < GPU_MAXRES; i++) if (g->res[i].id == id && id) return &g->res[i];
     return NULL;
+}
+
+/* يحفظ نسخة من الإطار المعروض قبل أن يُطفئ الضيف الشاشة أو يحرر المورد */
+static void gpu_keep_last(Gpu *g) {
+    GpuRes *r = gpu_find(g, g->scanout_res);
+    if (!r || !r->pix) return;
+    free(g->last.pix);
+    g->last.w = r->w; g->last.h = r->h; g->last.fmt = r->fmt; g->last.id = r->id;
+    g->last.pix = malloc((size_t)r->w * r->h * 4);
+    if (g->last.pix) memcpy(g->last.pix, r->pix, (size_t)r->w * r->h * 4);
 }
 
 static void gpu_res_free(GpuRes *r) {
@@ -234,11 +245,12 @@ static void gpu_cmd(Machine *m, Gpu *g, const uint8_t *req, uint32_t rl, uint8_t
         r->pix = calloc((size_t)w * h, 4);
         break;
     }
-    case 0x0102: { GpuRes *r = gpu_find(g, U32(0)); if (r) { if (g->scanout_res == r->id) g->scanout_res = 0; gpu_res_free(r); } else rtype = 0x1203; break; }
+    case 0x0102: { GpuRes *r = gpu_find(g, U32(0)); if (r) { if (g->scanout_res == r->id) { gpu_keep_last(g); g->scanout_res = 0; } gpu_res_free(r); } else rtype = 0x1203; break; }
     case 0x0103: { /* SET_SCANOUT */
         g->sx = U32(0); g->sy = U32(4); g->sw = U32(8); g->sh = U32(12);
         uint32_t sid = U32(16), rid = U32(20);
         if (sid != 0) { rtype = 0x1202; break; }
+        if (g->scanout_res && g->scanout_res != rid) gpu_keep_last(g);
         g->scanout_res = rid;
         if (rid && !g->announced && m->verbose >= 0) {
             fprintf(stderr, "\n[gtv] gpu: عرض المورد %u بأبعاد %ux%u\n", rid, g->sw, g->sh);
@@ -335,6 +347,7 @@ int gpu_screenshot(Machine *m, const char *path) {
     (void)m;
     Gpu *g = g_gpu;
     GpuRes *r = g ? gpu_find(g, g->scanout_res) : NULL;
+    if (!r && g && g->last.pix) r = &g->last;
     if (!r) return -1;
     uint32_t w = r->w, h = r->h;
     size_t rawlen = (size_t)h * (1 + 3 * w);

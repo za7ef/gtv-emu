@@ -24,13 +24,13 @@ static long load_file(const char *path, uint8_t *dst, uint64_t cap) {
 
 static void usage(void) {
     fprintf(stderr,
-        "الاستخدام: gtv-emu (-k Image[.gz] | --bootimg boot.img [--vendor-boot vendor_boot.img] [--androidboot مفتاح=قيمة]) [-i initrd] [-d disk.img] [-m ميغابايت] [-a \"bootargs\"]\n"
+        "الاستخدام: gtv-emu (-k Image[.gz] | --bootimg boot.img [--vendor-boot vendor_boot.img] [--init-boot init_boot.img] [--androidboot مفتاح=قيمة]) [-i initrd] [-d disk.img] [-m ميغابايت] [-a \"bootargs\"]\n"
         "           [--feed \"أوامر\"] [--keys \"نص\"] [--screenshot out.png] [--audio out.wav] [--events \"key:HOME;tap:640,360\"] [--smp N]\n           [--max-insns N] [--no-jit] [-v]\n");
     exit(1);
 }
 
 int main(int argc, char **argv) {
-    const char *bootimg = NULL, *vendorimg = NULL, *props[32]; int nprops = 0;
+    const char *bootimg = NULL, *vendorimg = NULL, *initbootimg = NULL, *props[32]; int nprops = 0;
     const char *kernel = NULL, *initrd = NULL, *disk = NULL, *feed = NULL, *keys = NULL, *shot = NULL, *audio = NULL;
     const char *bootargs = "console=ttyAMA0 earlycon=pl011,0x09000000 nokaslr rdinit=/init";
     uint64_t ram_mb = 512, max_insns = 0;
@@ -53,6 +53,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--jit")) use_jit = 1;
         else if (!strcmp(argv[i], "--bootimg") && i + 1 < argc) bootimg = argv[++i];
         else if (!strcmp(argv[i], "--vendor-boot") && i + 1 < argc) vendorimg = argv[++i];
+        else if (!strcmp(argv[i], "--init-boot") && i + 1 < argc) initbootimg = argv[++i];
         else if (!strcmp(argv[i], "--androidboot") && i + 1 < argc && nprops < 32) props[nprops++] = argv[++i];
         else usage();
     }
@@ -76,13 +77,14 @@ int main(int argc, char **argv) {
     static char abargs[8192];
     long ksz;
     if (bootimg) {
-        if (android_load(&ab, bootimg, vendorimg, props, nprops) < 0) return 1;
+        if (android_load(&ab, bootimg, vendorimg, initbootimg, props, nprops) < 0) return 1;
         if (ab.kernel_len > m->ram_size - 0x200000) { fprintf(stderr, "النواة أكبر من الذاكرة\n"); return 1; }
         memcpy(m->ram + (kaddr - RAM_BASE), ab.kernel, ab.kernel_len);
         ksz = ab.kernel_len;
         /* سطر الأوامر: ما في الصور، ثم ما يضيفه المستخدم عبر -a */
         snprintf(abargs, sizeof abargs, "%s %s", ab.cmdline, bootargs);
         bootargs = abargs;
+        if (initbootimg) fprintf(stderr, "[gtv] init_boot.img: قرص أولي عام %zu بايت\n", ab.initboot_len);
         fprintf(stderr, "[gtv] boot.img إصدار %u%s: نواة %zu بايت%s، قرص أولي %zu بايت، bootconfig %zu بايت\n",
                 ab.header_version, vendorimg ? " مع vendor_boot" : "", ab.kernel_len, ab.kernel_gz ? " (فُكّ ضغطها من gzip)" : "",
                 ab.ramdisk_len, ab.bootconfig_len);

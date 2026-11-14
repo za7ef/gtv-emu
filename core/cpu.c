@@ -65,7 +65,8 @@ static void sync_exception(CPU *c, uint64_t esr, uint64_t far, int set_far) {
 }
 
 void raise_undef(CPU *c) {
-    if (c->m->verbose >= 2 || (!c->m->quiet_unimpl && c->el == 1))
+    static int el0_reports;
+    if (c->m->verbose >= 2 || (!c->m->quiet_unimpl && (c->el == 1 || el0_reports++ < 8)))
         fprintf(stderr, "[gtv] تعليمة غير معرّفة %08x عند pc=%016llx EL%d\n", c->cur_insn,
                 (unsigned long long)c->cur_pc, c->el);
     sync_exception(c, (0ULL << 26) | (1ULL << 25), 0, 0);
@@ -1131,6 +1132,19 @@ static void exec_dp_reg(CPU *c, uint32_t insn) {
         case 9: r = shift_reg(a, 1, b, sf); break;
         case 10: r = shift_reg(a, 2, b, sf); break;
         case 11: r = shift_reg(a, 3, b, sf); break;
+        case 16: case 17: case 18: case 19:   /* CRC32B/H/W/X */
+        case 20: case 21: case 22: case 23: { /* CRC32CB/H/W/X */
+            int nbytes = 1 << (opc & 3);
+            if ((nbytes == 8) != sf) { raise_undef(c); return; }
+            uint32_t poly = (opc & 4) ? 0x82F63B78u : 0xEDB88320u, crc = (uint32_t)X(rn);
+            uint64_t v = X(rm);
+            for (int k = 0; k < nbytes; k++) {
+                crc ^= (uint8_t)(v >> (8 * k));
+                for (int j = 0; j < 8; j++) crc = (crc >> 1) ^ (poly & -(crc & 1));
+            }
+            r = crc; sf = 0;
+            break;
+        }
         default: raise_undef(c); return;
         }
         if (!sf) r &= 0xFFFFFFFF;

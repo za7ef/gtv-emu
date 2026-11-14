@@ -154,11 +154,11 @@ void virtio_create_all(Machine *m, const char *disk, const char *keys, const cha
 void snd_close(Machine *m);
 typedef struct {
     uint8_t *kernel; size_t kernel_len; int kernel_gz;
-    uint8_t *ramdisk; size_t ramdisk_len; size_t bootconfig_len;
+    uint8_t *ramdisk; size_t ramdisk_len; size_t bootconfig_len, initboot_len;
     char cmdline[4096];
     uint32_t header_version, vendor_version;
 } AndroidBoot;
-int android_load(AndroidBoot *ab, const char *boot, const char *vendor, const char **props, int nprops);
+int android_load(AndroidBoot *ab, const char *boot, const char *vendor, const char *initboot, const char **props, int nprops);
 uint8_t *gunzip(const uint8_t *d, size_t n, size_t *outlen);
 void input_set_events(const char *s);
 void input_arm_events(void);

@@ -168,7 +168,7 @@ static void append(uint8_t **buf, size_t *len, const void *d, size_t n) {
 }
 
 /* يحمّل boot.img وvendor_boot.img (اختياري) ويملأ ab */
-int android_load(AndroidBoot *ab, const char *boot, const char *vendor, const char **props, int nprops) {
+int android_load(AndroidBoot *ab, const char *boot, const char *vendor, const char *initboot, const char **props, int nprops) {
     memset(ab, 0, sizeof *ab);
     size_t n;
     uint8_t *b = read_all(boot, &n);
@@ -218,6 +218,19 @@ int android_load(AndroidBoot *ab, const char *boot, const char *vendor, const ch
         }
         ab->vendor_version = vver;
         free(v);
+    }
+    /* init_boot.img (أندرويد 13+): يحمل القرص الأولي العام وفيه init المرحلة الأولى */
+    if (initboot) {
+        size_t in_;
+        uint8_t *ib = read_all(initboot, &in_);
+        if (!ib || in_ < 4096 || memcmp(ib, "ANDROID!", 8) || le32(ib + 40) < 3) {
+            fprintf(stderr, "[gtv] init_boot.img غير صالحة: %s\n", initboot); free(ib); free(b); return -1;
+        }
+        uint32_t iks = le32(ib + 8), irs = le32(ib + 12);
+        size_t io = 4096 + align_up(iks, 4096);
+        if (io + irs <= in_) append(&ab->ramdisk, &ab->ramdisk_len, ib + io, irs);
+        ab->initboot_len = irs;
+        free(ib);
     }
     if (rsz) append(&ab->ramdisk, &ab->ramdisk_len, b + roff, rsz);
     free(b);

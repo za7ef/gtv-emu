@@ -50,6 +50,10 @@ typedef struct Jit {
     uint8_t *codemap;      /* بت لكل صفحة فيزيائية تحتوي شيفرة مترجمة */
     uint64_t npages;
     int flush_pending;
+    uint64_t inval[64]; int ninval;  /* صفحات فيزيائية تنتظر الإبطال */
+    uint32_t used, tombs;            /* خانات الجدول المشغولة والمحذوفة */
+    uint64_t gen;                    /* يزيد مع كل إبطال؛ يمنع ربط كتلة أُبطلت */
+    uint64_t stats_inval;
     void (*enter)(CPU *, void *, void *);
     uint32_t *exit_rx;     /* الخاتمة المشتركة */
     uint64_t stats_blocks, stats_flushes, stats_chains;
@@ -555,19 +559,54 @@ int jit_page_is_code(Machine *m, uint64_t pa) {
     return pg < j->npages && (j->codemap[pg >> 3] & (1 << (pg & 7)));
 }
 
+#define TOMB ((uint32_t *)(uintptr_t)1)
+
 static void jit_flush(Jit *j, CPU *c) {
     j->pos = j->tramp_end;
     memset(j->hash, 0, sizeof(Block) * HASH_SIZE);
     memset(j->codemap, 0, (j->npages + 7) / 8);
-    for (int i = 0; i < TLB_SIZE; i++) c->tlb[i].code = 0;
+    for (int k = 0; k < c->m->ncpu; k++)
+        for (int i = 0; i < TLB_SIZE; i++) c->m->cpus[k].tlb[i].code = 0;
     j->flush_pending = 0;
+    j->ninval = 0;
+    j->used = j->tombs = 0;
+    j->gen++;
     j->stats_flushes++;
+}
+
+/* إبطال صفحة واحدة: تُحذف كتلها من الجدول فقط. لا يعبر الربط المباشر حدود الصفحة،
+ * فلا توجد قفزات من صفحات أخرى إلى الشيفرة المحذوفة. تبقى مساحتها مهدرة حتى التفريغ الكامل. */
+static void jit_invalidate_pages(Jit *j, CPU *c) {
+    for (int k = 0; k < j->ninval; k++) {
+        uint64_t pg = j->inval[k];
+        for (uint32_t i = 0; i < HASH_SIZE; i++) {
+            Block *b = &j->hash[i];
+            if (b->code && b->code != TOMB && (b->pa >> 12) == pg) {
+                b->code = TOMB; b->va = b->pa = ~0ULL; b->mode = ~0u;
+                j->tombs++;
+            }
+        }
+        uint64_t idx = pg - (RAM_BASE >> 12);
+        if (idx < j->npages) j->codemap[idx >> 3] &= ~(1 << (idx & 7));
+        for (int n = 0; n < c->m->ncpu; n++)
+            for (int i = 0; i < TLB_SIZE; i++)
+                if (c->m->cpus[n].tlb[i].pa >> 12 == pg) c->m->cpus[n].tlb[i].code = 0;
+        j->stats_inval++;
+    }
+    j->ninval = 0;
+    j->gen++;
 }
 
 void jit_code_write(CPU *c, uint64_t pa) {
     Jit *j = c->m->jit;
     if (!j || !jit_page_is_code(c->m, pa)) return;
-    j->flush_pending = 1;
+    uint64_t pg = pa >> 12;
+    int seen = 0;
+    for (int k = 0; k < j->ninval; k++) if (j->inval[k] == pg) seen = 1;
+    if (!seen) {
+        if (j->ninval < 64) j->inval[j->ninval++] = pg;
+        else j->flush_pending = 1;
+    }
     c->jit_exit_req = 1;
     c->jit_budget = 0;
 }
@@ -575,7 +614,7 @@ void jit_code_write(CPU *c, uint64_t pa) {
 void jit_dma_write(Machine *m, uint64_t pa, uint64_t len) {
     if (!m->jit) return;
     for (uint64_t a = pa & ~0xFFFULL; a < pa + len; a += 0x1000)
-        if (jit_page_is_code(m, a)) { jit_code_write(m->cur, a); return; }
+        if (jit_page_is_code(m, a)) jit_code_write(m->cur, a);
 }
 
 static inline uint32_t hkey(uint64_t va, uint64_t pa, uint32_t mode) {
@@ -718,6 +757,8 @@ void jit_exec(CPU *c) {
     c->jit_exit_req = 0;
     while (c->jit_budget > 0 && !c->jit_exit_req && !c->stop && !c->halted) {
         if (j->flush_pending) { jit_flush(j, c); pending_slot = NULL; }
+        else if (j->ninval) { jit_invalidate_pages(j, c); pending_slot = NULL; }
+        if (j->used + j->tombs > HASH_SIZE * 3 / 4) { jit_flush(j, c); pending_slot = NULL; }
         uint64_t va = c->pc, pa;
         c->cur_pc = va;
         const uint8_t *host = cpu_code_ptr(c, va, &pa);
@@ -730,6 +771,7 @@ void jit_exec(CPU *c) {
                        code = translate_block(j, c, va, pa, host, mode, &ok);
                        if (!ok) { fprintf(stderr, "[gtv] فشل JIT\n"); exit(4); } }
             b->va = va; b->pa = pa; b->mode = mode; b->code = code;
+            j->used++;
         }
         if (pending_slot) {
             /* ربط مباشر: رقّع قفزة الخروج لتذهب إلى الكتلة الهدف */
@@ -742,16 +784,16 @@ void jit_exec(CPU *c) {
         }
         c->jit_last_slot = 0;
         j->enter(c, c->tlb, b->code);
-        if (c->jit_last_slot && !j->flush_pending) pending_slot = (uint32_t *)(uintptr_t)c->jit_last_slot;
+        if (c->jit_last_slot && !j->flush_pending && !j->ninval) pending_slot = (uint32_t *)(uintptr_t)c->jit_last_slot;
     }
 }
 
 void jit_stats(Machine *m) {
     Jit *j = m->jit;
     if (!j) return;
-    fprintf(stderr, "[gtv] JIT: %llu كتلة، %llu ربط مباشر، %llu تفريغ للذاكرة المؤقتة\n",
+    fprintf(stderr, "[gtv] JIT: %llu كتلة، %llu ربط مباشر، %llu تفريغ كامل، %llu إبطال صفحة\n",
             (unsigned long long)j->stats_blocks, (unsigned long long)j->stats_chains,
-            (unsigned long long)j->stats_flushes);
+            (unsigned long long)j->stats_flushes, (unsigned long long)j->stats_inval);
 }
 
 #else /* لا يوجد مضيف ARM64: يعمل المفسّر وحده */
