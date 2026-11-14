@@ -439,7 +439,7 @@ static uint64_t sysreg_read(CPU *c, uint32_t enc, int *ok) {
     case SR(3,3,14,3,2): return c->cntv_cval;
     case SR(3,0,14,1,0): return c->cntkctl;
     case SR(3,0,0,0,0): return 0x410FD083ULL; /* Cortex-A72 r0p3 */
-    case SR(3,0,0,0,5): return 0x80000000ULL; /* MPIDR: معالج واحد */
+    case SR(3,0,0,0,5): return 0x80000000ULL | (uint64_t)c->id; /* MPIDR: Aff0 = رقم المعالج */
     case SR(3,0,0,0,6): return 0;
     case SR(3,0,0,4,0): return 0x0000000001000011ULL; /* PFR0: EL0/EL1 AArch64، FP، SIMD، GICv3 */
     case SR(3,0,0,5,0): return 0x6; /* DFR0 */
@@ -513,7 +513,8 @@ static void do_psci(CPU *c) {
     case 0x84000006: ret = 2; break;                /* MIGRATE_INFO_TYPE */
     case 0x8400000A: {                              /* PSCI_FEATURES */
         uint32_t q = (uint32_t)c->x[1];
-        ret = (q == 0x84000000 || q == 0x84000008 || q == 0x84000009 || q == 0x8400000A) ? 0 : -1;
+        ret = (q == 0x84000000 || q == 0x84000008 || q == 0x84000009 || q == 0x8400000A ||
+               q == 0xC4000003 || q == 0x84000003 || q == 0xC4000004 || q == 0x84000004 || q == 0x84000002) ? 0 : -1;
         break;
     }
     case 0x84000008:                                /* SYSTEM_OFF */
@@ -522,7 +523,32 @@ static void do_psci(CPU *c) {
     case 0x84000009:                                /* SYSTEM_RESET */
         fprintf(stderr, "\n[gtv] النظام طلب إعادة التشغيل (PSCI SYSTEM_RESET)\n");
         c->stop = 1; c->exit_code = 0; break;
-    case 0xC4000003: case 0x84000003: ret = -1; break; /* CPU_ON غير مدعوم */
+    case 0xC4000003: case 0x84000003: {             /* CPU_ON */
+        Machine *m = c->m;
+        uint64_t t = c->x[1] & 0xFF;
+        if (t >= (uint64_t)m->ncpu || (c->x[1] & 0xFFFFFF00ULL)) { ret = -2; break; } /* INVALID_PARAMS */
+        CPU *o = &m->cpus[t];
+        if (o->powered) { ret = -4; break; }                                            /* ALREADY_ON */
+        uint64_t entry = c->x[2], ctx = c->x[3];
+        int id = o->id;
+        cpu_reset(o, m);
+        o->id = id;
+        o->pc = entry;
+        o->x[0] = ctx;
+        o->cntvoff = c->cntvoff;
+        o->powered = 1;
+        if (m->verbose) fprintf(stderr, "[gtv] PSCI: تشغيل المعالج %d عند %llx\n", id, (unsigned long long)entry);
+        ret = 0;
+        break;
+    }
+    case 0xC4000004: case 0x84000004: {             /* AFFINITY_INFO */
+        uint64_t t = c->x[1] & 0xFF;
+        ret = t < (uint64_t)c->m->ncpu ? (c->m->cpus[t].powered ? 0 : 1) : -2;
+        break;
+    }
+    case 0x84000002:                                /* CPU_OFF */
+        c->powered = 0; c->halted = 1; ret = 0;
+        break;
     default: ret = -1; break;
     }
     c->x[0] = (uint64_t)ret;
@@ -564,7 +590,8 @@ static void exec_system(CPU *c, uint32_t insn) {
         if (L) raise_undef(c);
         if (crn == 8) { /* TLBI */
             if (c->el == 0) raise_undef(c);
-            tlb_flush(c);
+            /* نبطل ذاكرة الترجمة في كل المعالجات (تغطي صيغ IS المذاعة) */
+            for (int k = 0; k < c->m->ncpu; k++) tlb_flush(&c->m->cpus[k]);
             return;
         }
         if (crn == 7) {
@@ -1209,15 +1236,20 @@ int cpu_run(CPU *c, uint64_t max_insns) {
             if (poll) uart_poll(m);
             if (m->verbose >= 3 && (tick % 9766) == 0) fprintf(stderr, "[gtv] %lluM pc=%016llx EL%d\n", (unsigned long long)(c->icount / 1000000), (unsigned long long)c->pc, c->el);
         }
-        if (m->irq_line && !(c->daif & (1 << 7))) {
+        if (c->irq_line && !(c->daif & (1 << 7))) {
             c->halted = 0;
             take_exception(c, EXC_IRQ, 0, 0, 0, c->pc);
+        }
+        if (c->halted && m->ncpu > 1) {
+            /* مع تعدد المعالجات: نتخلى عن الدور، والحلقة العامة تنام إذا توقف الجميع */
+            if (!c->irq_line) return 0;
+            c->halted = 0;
         }
         if (c->halted) {
             /* انتظار مقاطعة: نام حتى موعد المؤقت التالي */
             uint64_t dl = timer_next_deadline(m);
             uint64_t now = cpu_counter(m);
-            if (!m->irq_line) {
+            if (!c->irq_line) {
                 if (dl > now) {
                     uint64_t wait_ns = (dl - now) * 16;
                     if (wait_ns > 10000000) wait_ns = 10000000;
@@ -1227,7 +1259,7 @@ int cpu_run(CPU *c, uint64_t max_insns) {
                 uart_poll(m);
                 timer_update(m);
             }
-            if (m->irq_line) c->halted = 0;
+            if (c->irq_line) c->halted = 0;
             c->icount++;
             continue;
         }
@@ -1247,4 +1279,46 @@ int cpu_run(CPU *c, uint64_t max_insns) {
         c->icount++;
     }
     return c->stop;
+}
+
+/* ---------------- تشغيل الآلة بعدة معالجات ----------------
+ * تُنفَّذ المعالجات بالتناوب على خيط واحد من المضيف (شرائح من 16384 تعليمة)،
+ * فيبقى النموذج حتميًا ولا يحتاج إلى أقفال. تُلغى مراقبة التعليمات الحصرية
+ * (LDXR/STXR) للمعالج عند انتهاء شريحته، فيفشل STXR ويعيد المحاولة بدل كسر الذرّية. */
+uint64_t machine_icount(Machine *m) {
+    uint64_t t = 0;
+    for (int i = 0; i < m->ncpu; i++) t += m->cpus[i].icount;
+    return t;
+}
+
+int machine_run(Machine *m, uint64_t max_insns) {
+    if (m->ncpu == 1) { m->cur = &m->cpus[0]; return cpu_run(&m->cpus[0], max_insns); }
+    const uint64_t SLICE = 16384;
+    for (;;) {
+        int any_run = 0, stop = 0;
+        for (int i = 0; i < m->ncpu; i++) {
+            CPU *c = &m->cpus[i];
+            if (!c->powered) continue;
+            m->cur = c;
+            cpu_run(c, SLICE);
+            c->excl_valid = 0;
+            if (c->stop) { stop = 1; m->cpus[0].exit_code = c->exit_code; break; }
+            if (!c->halted || c->irq_line) any_run = 1;
+        }
+        if (stop) return 1;
+        if (max_insns && machine_icount(m) >= max_insns) return 0;
+        if (!any_run) {
+            /* كل المعالجات في WFI: نام حتى أقرب موعد مؤقت أو وصول إدخال */
+            uint64_t dl = timer_next_deadline(m), now = cpu_counter(m);
+            if (dl > now) {
+                uint64_t wait_ns = (dl - now) * 16;
+                if (wait_ns > 10000000) wait_ns = 10000000;
+                struct timespec ts = { 0, (long)wait_ns };
+                if (!uart_has_input(m)) nanosleep(&ts, NULL);
+            }
+            uart_poll(m);
+            timer_update(m);
+            for (int i = 0; i < m->ncpu; i++) if (m->cpus[i].powered && m->cpus[i].halted) m->cpus[i].icount += 64;
+        }
+    }
 }

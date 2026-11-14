@@ -12,12 +12,13 @@
 #define GIC_DIST_BASE   0x08000000ULL
 #define GIC_DIST_SIZE   0x00010000ULL
 #define GIC_REDIST_BASE 0x080A0000ULL
-#define GIC_REDIST_SIZE 0x00020000ULL
+#define MAX_CPUS        4
+#define GIC_REDIST_SIZE (0x00020000ULL * MAX_CPUS)
 #define UART_BASE       0x09000000ULL
 #define UART_SIZE       0x00001000ULL
 #define VIRTIO_BASE     0x0A000000ULL
 #define VIRTIO_SIZE     0x00000200ULL
-#define VIRTIO_COUNT    4   /* 0 قرص، 1 شبكة، 2 رسوميات، 3 لوحة مفاتيح */
+#define VIRTIO_COUNT    5   /* 0 قرص، 1 شبكة، 2 رسوميات، 3 لوحة مفاتيح، 4 صوت */
 #define RAM_BASE        0x40000000ULL
 
 #define IRQ_UART   33   /* SPI 1  */
@@ -86,19 +87,23 @@ typedef struct CPU {
     uint32_t cur_insn;
     jmp_buf jb;
     int halted;               /* WFI */
+    int id;                   /* رقم المعالج (Aff0) */
+    int powered;              /* يعمل أم متوقف (PSCI CPU_ON/CPU_OFF) */
+    int irq_line;             /* خط المقاطعة إلى هذا المعالج */
     int stop;                 /* طلب إيقاف */
     int exit_code;
     struct Machine *m;
 } CPU;
 
 typedef struct Machine {
-    CPU cpu;
+    CPU cpus[MAX_CPUS];
+    int ncpu;
+    CPU *cur;                /* المعالج الذي ينفّذ الآن */
     uint8_t *ram;
     uint64_t ram_size;
     void *gic;
     void *uart;
     void *virtio[VIRTIO_COUNT];
-    int irq_line;            /* خط المقاطعة إلى المعالج */
     uint64_t start_ns;
     int trace;
     int verbose;
@@ -109,6 +114,8 @@ typedef struct Machine {
 /* cpu.c */
 void cpu_reset(CPU *c, Machine *m);
 int  cpu_run(CPU *c, uint64_t max_insns);
+int  machine_run(Machine *m, uint64_t max_insns);
+uint64_t machine_icount(Machine *m);
 void tlb_flush(CPU *c);
 uint64_t cpu_counter(Machine *m);
 
@@ -143,7 +150,8 @@ int  uart_has_input(Machine *m);
 void uart_feed(Machine *m, const char *s);
 
 /* virtio.c */
-void virtio_create_all(Machine *m, const char *disk, const char *keys);
+void virtio_create_all(Machine *m, const char *disk, const char *keys, const char *audio);
+void snd_close(Machine *m);
 void virtio_poll(Machine *m);
 int  virtio_has_work(Machine *m);
 int  gpu_screenshot(Machine *m, const char *path);
@@ -164,7 +172,7 @@ void jit_stats(Machine *m);
 
 /* fdt.c */
 size_t fdt_build(uint8_t *buf, size_t cap, uint64_t ram_size, const char *bootargs,
-                 uint64_t initrd_start, uint64_t initrd_end, int nvirtio);
+                 uint64_t initrd_start, uint64_t initrd_end, int nvirtio, int ncpu);
 
 uint64_t host_ns(void);
 

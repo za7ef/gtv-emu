@@ -55,7 +55,7 @@ static void prop_strlist(FDT *f, const char *name, const char *a, const char *b)
 }
 
 size_t fdt_build(uint8_t *buf, size_t cap, uint64_t ram_size, const char *bootargs,
-                 uint64_t initrd_start, uint64_t initrd_end, int nvirtio) {
+                 uint64_t initrd_start, uint64_t initrd_end, int nvirtio, int ncpu) {
     static uint8_t st[16384];
     FDT f = { st, 0, sizeof(st), {0}, 0 };
     char nb[64];
@@ -85,11 +85,15 @@ size_t fdt_build(uint8_t *buf, size_t cap, uint64_t ram_size, const char *bootar
     begin(&f, "cpus");
     prop_u32(&f, "#address-cells", 1);
     prop_u32(&f, "#size-cells", 0);
-    begin(&f, "cpu@0");
-    prop_str(&f, "device_type", "cpu");
-    prop_str(&f, "compatible", "arm,cortex-a72");
-    prop_u32(&f, "reg", 0);
-    end(&f);
+    for (int i = 0; i < ncpu; i++) {
+        snprintf(nb, sizeof nb, "cpu@%d", i);
+        begin(&f, nb);
+        prop_str(&f, "device_type", "cpu");
+        prop_str(&f, "compatible", "arm,cortex-a72");
+        prop_u32(&f, "reg", i);
+        prop_str(&f, "enable-method", "psci");
+        end(&f);
+    }
     end(&f);
 
     begin(&f, "psci");

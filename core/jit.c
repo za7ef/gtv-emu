@@ -575,7 +575,7 @@ void jit_code_write(CPU *c, uint64_t pa) {
 void jit_dma_write(Machine *m, uint64_t pa, uint64_t len) {
     if (!m->jit) return;
     for (uint64_t a = pa & ~0xFFFULL; a < pa + len; a += 0x1000)
-        if (jit_page_is_code(m, a)) { jit_code_write(&m->cpu, a); return; }
+        if (jit_page_is_code(m, a)) { jit_code_write(m->cur, a); return; }
 }
 
 static inline uint32_t hkey(uint64_t va, uint64_t pa, uint32_t mode) {

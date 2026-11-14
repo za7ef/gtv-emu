@@ -11,7 +11,7 @@
 #define VQ_MAX 4
 #define VF_VERSION_1 (1ULL << 32)
 
-enum { VT_NONE = 0, VT_NET = 1, VT_BLK = 2, VT_GPU = 16, VT_INPUT = 18 };
+enum { VT_NONE = 0, VT_NET = 1, VT_BLK = 2, VT_GPU = 16, VT_INPUT = 18, VT_SND = 25 };
 
 typedef struct { uint64_t addr; uint32_t len; int wr; } VDesc;
 
@@ -486,18 +486,162 @@ static void input_poll(Machine *m, VDev *d) {
     if (in->pt != in->ph) input_flush(m, d);
 }
 
+
+/* =========================== الصوت ===========================
+ * virtio-snd: مخرج PCM واحد (S16، ‏44.1 أو 48 كيلوهرتز، قناة أو قناتان).
+ * تُكتب العينات إلى ملف WAV، وتُعاد مخازن الضيف بإيقاع زمن التشغيل الحقيقي. */
+typedef struct {
+    const char *path;
+    FILE *wav;
+    uint32_t data_bytes;
+    uint8_t channels, format, rate;
+    uint32_t buffer_bytes, period_bytes;
+    int state;                       /* 0 خامل، 1 مُعد، 2 يعمل */
+    struct { int head; uint32_t len; uint64_t due; } pend[256];
+    int ph, pt;
+    uint64_t play_ns;                /* موعد انتهاء آخر مخزن مُجدول */
+    uint64_t total_bytes;
+} Snd;
+
+static Snd *g_snd;
+static const uint32_t SND_RATES[] = { 5512, 8000, 11025, 16000, 22050, 32000, 44100, 48000, 64000, 88200, 96000, 176400, 192000, 384000 };
+
+static void snd_cfg(VDev *d, uint8_t *cfg) {
+    (void)d;
+    uint32_t jacks = 0, streams = 1, chmaps = 1;
+    memcpy(cfg, &jacks, 4); memcpy(cfg + 4, &streams, 4); memcpy(cfg + 8, &chmaps, 4);
+}
+
+static uint32_t snd_rate_hz(Snd *s) { return s->rate < 14 ? SND_RATES[s->rate] : 48000; }
+
+static void snd_wav_open(Snd *s) {
+    if (s->wav || !s->path) return;
+    s->wav = fopen(s->path, "wb");
+    if (!s->wav) return;
+    uint8_t h[44] = {0};
+    fwrite(h, 1, 44, s->wav); /* تُكتب الترويسة الصحيحة عند الإغلاق */
+    s->data_bytes = 0;
+}
+
+void snd_close(Machine *m) {
+    (void)m;
+    Snd *s = g_snd;
+    if (!s || !s->wav) return;
+    uint32_t rate = snd_rate_hz(s), ch = s->channels ? s->channels : 2, ba = ch * 2, br = rate * ba;
+    uint8_t h[44];
+    memcpy(h, "RIFF", 4); uint32_t v = 36 + s->data_bytes; memcpy(h + 4, &v, 4);
+    memcpy(h + 8, "WAVEfmt ", 8); v = 16; memcpy(h + 16, &v, 4);
+    uint16_t w = 1; memcpy(h + 20, &w, 2); w = ch; memcpy(h + 22, &w, 2);
+    memcpy(h + 24, &rate, 4); memcpy(h + 28, &br, 4); w = ba; memcpy(h + 32, &w, 2); w = 16; memcpy(h + 34, &w, 2);
+    memcpy(h + 36, "data", 4); memcpy(h + 40, &s->data_bytes, 4);
+    fseek(s->wav, 0, SEEK_SET); fwrite(h, 1, 44, s->wav); fclose(s->wav); s->wav = NULL;
+    fprintf(stderr, "[gtv] snd: حُفظ %u بايت من الصوت (%u هرتز، %u قناة) في %s\n", s->data_bytes, rate, ch, s->path);
+}
+
+static void snd_ctl(Snd *s, const uint8_t *rq, uint32_t rl, uint8_t *resp, uint32_t *wl) {
+    uint32_t code = 0, st = 0x8000;
+    if (rl >= 4) memcpy(&code, rq, 4);
+    *wl = 4;
+#define R32(o) ({ uint32_t _v = 0; if ((o) + 4 <= rl) memcpy(&_v, rq + (o), 4); _v; })
+    switch (code) {
+    case 0x0100: { /* PCM_INFO */
+        uint32_t start = R32(4), count = R32(8), size = R32(12);
+        if (start != 0 || count != 1 || size < 32) { st = 0x8001; break; }
+        uint8_t *in = resp + 4; memset(in, 0, size);
+        uint64_t fmts = 1ULL << 5;                     /* S16 */
+        uint64_t rates = (1ULL << 6) | (1ULL << 7);     /* 44100، 48000 */
+        memcpy(in + 8, &fmts, 8); memcpy(in + 16, &rates, 8);
+        in[24] = 0; in[25] = 1; in[26] = 2;             /* إخراج، 1–2 قناة */
+        *wl = 4 + size;
+        break;
+    }
+    case 0x0200: { /* CHMAP_INFO */
+        uint32_t start = R32(4), count = R32(8), size = R32(12);
+        if (start != 0 || count != 1 || size < 24) { st = 0x8001; break; }
+        uint8_t *in = resp + 4; memset(in, 0, size);
+        in[4] = 0; in[5] = 2; in[6] = 3; in[7] = 4;     /* FL، FR */
+        *wl = 4 + size;
+        break;
+    }
+    case 0x0001: st = 0x8002; break; /* JACK_INFO: لا توجد مقابس */
+    case 0x0101: /* PCM_SET_PARAMS */
+        if (R32(4) != 0) { st = 0x8001; break; }
+        s->buffer_bytes = R32(8); s->period_bytes = R32(12);
+        s->channels = rl > 20 ? rq[20] : 2; s->format = rl > 21 ? rq[21] : 5; s->rate = rl > 22 ? rq[22] : 7;
+        if (s->format != 5 || s->channels < 1 || s->channels > 2) st = 0x8002;
+        break;
+    case 0x0102: s->state = 1; break;                                    /* PREPARE */
+    case 0x0103: s->state = 0; break;                                    /* RELEASE */
+    case 0x0104: s->state = 2; s->play_ns = host_ns(); break;            /* START */
+    case 0x0105: s->state = 1; break;                                    /* STOP */
+    default: st = 0x8002; break;
+    }
+#undef R32
+    memcpy(resp, &st, 4);
+}
+
+static void snd_tx_complete(Machine *m, VDev *d, int force) {
+    Snd *s = d->priv;
+    uint64_t now = host_ns();
+    int did = 0;
+    while (s->pt != s->ph && (force || s->pend[s->pt].due <= now)) {
+        VDesc v[16]; (void)v;
+        /* الحالة (OK) كُتبت مسبقًا عند الاستلام؛ نعيد المخزن الآن فقط */
+        vq_push(m, d, 2, s->pend[s->pt].head, s->pend[s->pt].len);
+        s->pt = (s->pt + 1) % 256;
+        did = 1;
+    }
+    if (did) vdev_irq(m, d);
+}
+
+static void snd_notify(Machine *m, VDev *d, int qi) {
+    Snd *s = d->priv;
+    VDesc v[64]; int n, head, did = 0;
+    if (qi == 0) {
+        static uint8_t rq[256], resp[4 + 64];
+        while ((head = vq_pop(m, d, 0, v, 64, &n)) >= 0) {
+            uint32_t rl = chain_read(m, v, n, rq, sizeof rq), wl = 0;
+            snd_ctl(s, rq, rl, resp, &wl);
+            vq_push(m, d, 0, head, chain_write(m, v, n, resp, wl));
+            did = 1;
+        }
+    } else if (qi == 2) {
+        static uint8_t buf[1 << 20];
+        while (((s->ph + 1) % 256) != s->pt && (head = vq_pop(m, d, 2, v, 64, &n)) >= 0) {
+            uint32_t rl = chain_read(m, v, n, buf, sizeof buf);
+            uint32_t pcm = rl > 4 ? rl - 4 : 0;
+            snd_wav_open(s);
+            if (s->wav && pcm) { fwrite(buf + 4, 1, pcm, s->wav); s->data_bytes += pcm; }
+            s->total_bytes += pcm;
+            uint8_t stat[8] = {0}; uint32_t ok = 0x8000; memcpy(stat, &ok, 4);
+            chain_write(m, v, n, stat, 8);
+            uint32_t bps = snd_rate_hz(s) * (s->channels ? s->channels : 2) * 2;
+            uint64_t now = host_ns();
+            if (s->play_ns < now) s->play_ns = now;
+            s->play_ns += (uint64_t)pcm * 1000000000ULL / bps;
+            s->pend[s->ph].head = head; s->pend[s->ph].len = 8; s->pend[s->ph].due = s->play_ns;
+            s->ph = (s->ph + 1) % 256;
+        }
+    } else {
+        /* eventq وrxq: نتركها معلّقة (لا أحداث ولا تسجيل صوت) */
+    }
+    if (did) vdev_irq(m, d);
+}
+
 /* =========================== الشبكة ===========================
- * واجهة خلفية مبسطة داخل المحاكي: بوابة افتراضية 10.0.2.2 ترد على ARP وping.
- * الوصول إلى الإنترنت عبر المضيف (NAT) لم يُنفَّذ بعد. */
+ * الواجهة الخلفية في netstack.c: شبكة مستخدم (NAT) عبر مقابس المضيف. */
 #define NET_HDR 12
+#define NET_RING 1024
 typedef struct {
     uint8_t mac[6];
-    uint8_t rx[16][1600]; uint32_t rxlen[16]; int rh, rt;
+    uint8_t (*rx)[1600]; uint32_t *rxlen; int rh, rt;
     uint64_t tx_frames, rx_frames;
 } Net;
 
-static const uint8_t GW_MAC[6] = { 0x52, 0x55, 0x0a, 0x00, 0x02, 0x02 };
-static const uint8_t GW_IP[4] = { 10, 0, 2, 2 };
+void netstack_init(void (*fn)(void *, const uint8_t *, uint32_t), void *ctx, const uint8_t mac[6]);
+void netstack_tx(const uint8_t *f, uint32_t n);
+void netstack_poll(void);
+int  netstack_active(void);
 
 static void net_cfg(VDev *d, uint8_t *cfg) {
     Net *nt = d->priv;
@@ -505,45 +649,14 @@ static void net_cfg(VDev *d, uint8_t *cfg) {
     uint16_t st = 1; memcpy(cfg + 6, &st, 2); /* LINK_UP */
 }
 
-static uint16_t ip_csum(const uint8_t *p, int n) {
-    uint32_t s = 0;
-    for (int i = 0; i + 1 < n; i += 2) s += (p[i] << 8) | p[i + 1];
-    if (n & 1) s += p[n - 1] << 8;
-    while (s >> 16) s = (s & 0xFFFF) + (s >> 16);
-    return ~s;
-}
-
-static void net_rx_enqueue(Net *nt, const uint8_t *f, uint32_t n) {
-    int nx = (nt->rh + 1) % 16;
+static void net_rx_enqueue(void *ctx, const uint8_t *f, uint32_t n) {
+    Net *nt = ctx;
+    int nx = (nt->rh + 1) % NET_RING;
     if (nx == nt->rt || n > 1514) return;
     memset(nt->rx[nt->rh], 0, NET_HDR);
     memcpy(nt->rx[nt->rh] + NET_HDR, f, n);
     nt->rxlen[nt->rh] = n + NET_HDR;
     nt->rh = nx;
-}
-
-static void net_gateway(Net *nt, const uint8_t *f, uint32_t n) {
-    if (n < 14) return;
-    uint16_t et = (f[12] << 8) | f[13];
-    uint8_t o[1514];
-    if (et == 0x0806 && n >= 42 && f[21] == 1 && !memcmp(f + 38, GW_IP, 4)) { /* طلب ARP */
-        memcpy(o, f + 6, 6); memcpy(o + 6, GW_MAC, 6); o[12] = 8; o[13] = 6;
-        memcpy(o + 14, f + 14, 6); o[20] = 0; o[21] = 2;
-        memcpy(o + 22, GW_MAC, 6); memcpy(o + 28, GW_IP, 4);
-        memcpy(o + 32, f + 22, 6); memcpy(o + 38, f + 28, 4);
-        net_rx_enqueue(nt, o, 42);
-    } else if (et == 0x0800 && n >= 34 && f[23] == 1 && !memcmp(f + 30, GW_IP, 4)) { /* ICMP */
-        int ihl = (f[14] & 15) * 4;
-        uint32_t tot = (f[16] << 8) | f[17];
-        if (tot + 14 > n || f[14 + ihl] != 8) return;
-        memcpy(o, f, 14 + tot);
-        memcpy(o, f + 6, 6); memcpy(o + 6, GW_MAC, 6);
-        memcpy(o + 26, f + 30, 4); memcpy(o + 30, f + 26, 4);
-        o[24] = o[25] = 0; uint16_t c = ip_csum(o + 14, ihl); o[24] = c >> 8; o[25] = c;
-        uint8_t *ic = o + 14 + ihl; ic[0] = 0; ic[2] = ic[3] = 0;
-        c = ip_csum(ic, tot - ihl); ic[2] = c >> 8; ic[3] = c;
-        net_rx_enqueue(nt, o, 14 + tot);
-    }
 }
 
 static void net_rx_deliver(Machine *m, VDev *d) {
@@ -555,7 +668,7 @@ static void net_rx_deliver(Machine *m, VDev *d) {
         uint16_t one = 1; memcpy(pk + 10, &one, 2); /* num_buffers */
         uint32_t put = chain_write(m, v, n, pk, nt->rxlen[nt->rt]);
         vq_push(m, d, 0, head, put);
-        nt->rt = (nt->rt + 1) % 16; nt->rx_frames++;
+        nt->rt = (nt->rt + 1) % NET_RING; nt->rx_frames++;
         did = 1;
     }
     if (did) vdev_irq(m, d);
@@ -568,7 +681,7 @@ static void net_notify(Machine *m, VDev *d, int qi) {
         static uint8_t buf[65536 + NET_HDR];
         while ((head = vq_pop(m, d, 1, v, 8, &n)) >= 0) {
             uint32_t l = chain_read(m, v, n, buf, sizeof buf);
-            if (l > NET_HDR) net_gateway(nt, buf + NET_HDR, l - NET_HDR);
+            if (l > NET_HDR) netstack_tx(buf + NET_HDR, l - NET_HDR);
             nt->tx_frames++;
             vq_push(m, d, 1, head, 0);
             did = 1;
@@ -586,7 +699,7 @@ static VDev *vdev_new(int idx, int type, int nq) {
     return d;
 }
 
-void virtio_create_all(Machine *m, const char *disk, const char *keys) {
+void virtio_create_all(Machine *m, const char *disk, const char *keys, const char *audio) {
     VDev *d;
     /* 0: قرص */
     if (disk) {
@@ -603,6 +716,8 @@ void virtio_create_all(Machine *m, const char *disk, const char *keys) {
     Net *nt = calloc(1, sizeof(Net));
     uint8_t mac[6] = { 0x52, 0x54, 0x00, 0x12, 0x34, 0x56 };
     memcpy(nt->mac, mac, 6);
+    nt->rx = calloc(NET_RING, 1600); nt->rxlen = calloc(NET_RING, 4);
+    netstack_init(net_rx_enqueue, nt, mac);
     d = vdev_new(1, VT_NET, 2);
     d->features |= (1u << 5) | (1u << 16); /* MAC, STATUS */
     d->priv = nt; d->notify = net_notify; d->cfg_read = net_cfg;
@@ -620,6 +735,13 @@ void virtio_create_all(Machine *m, const char *disk, const char *keys) {
     d = vdev_new(3, VT_INPUT, 2);
     d->priv = in; d->notify = input_notify; d->cfg_read = input_cfg; d->cfg_write = input_cfg_write;
     m->virtio[3] = d;
+    /* 4: صوت */
+    Snd *sn = calloc(1, sizeof(Snd));
+    sn->path = audio;
+    g_snd = sn;
+    d = vdev_new(4, VT_SND, 4);
+    d->priv = sn; d->notify = snd_notify; d->cfg_read = snd_cfg;
+    m->virtio[4] = d;
 }
 
 void virtio_poll(Machine *m) {
@@ -627,12 +749,15 @@ void virtio_poll(Machine *m) {
         VDev *d = m->virtio[i];
         if (!d || !(d->status & 4)) continue; /* DRIVER_OK */
         if (d->type == VT_INPUT) input_poll(m, d);
-        else if (d->type == VT_NET) net_rx_deliver(m, d);
+        else if (d->type == VT_NET) { netstack_poll(); net_rx_deliver(m, d); }
+        else if (d->type == VT_SND) snd_tx_complete(m, d, 0);
     }
 }
 
 int virtio_has_work(Machine *m) {
     (void)m;
+    if (g_snd && g_snd->pt != g_snd->ph) return 1;
+    if (netstack_active()) return 1;
     return g_kbd && g_kbd->keys_armed && g_kbd->keys && *g_kbd->keys;
 }
 
