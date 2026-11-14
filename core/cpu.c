@@ -66,7 +66,9 @@ static void sync_exception(CPU *c, uint64_t esr, uint64_t far, int set_far) {
 
 void raise_undef(CPU *c) {
     static int el0_reports;
-    if (c->m->verbose >= 2 || (!c->m->quiet_unimpl && (c->el == 1 || el0_reports++ < 8)))
+    /* قراءة سجلات التعريف (MRS) من EL0 تُحاكى في نواة لينكس عمدًا، فلا تُسجَّل */
+    int benign = c->el == 0 && (c->cur_insn & 0xFFF00000u) == 0xD5300000u;
+    if (c->m->verbose >= 2 || (!c->m->quiet_unimpl && (c->el == 1 || (!benign && el0_reports++ < 32))))
         fprintf(stderr, "[gtv] تعليمة غير معرّفة %08x عند pc=%016llx EL%d\n", c->cur_insn,
                 (unsigned long long)c->cur_pc, c->el);
     sync_exception(c, (0ULL << 26) | (1ULL << 25), 0, 0);
@@ -444,7 +446,7 @@ static uint64_t sysreg_read(CPU *c, uint32_t enc, int *ok) {
     case SR(3,0,0,0,6): return 0;
     case SR(3,0,0,4,0): return 0x0000000001000011ULL; /* PFR0: EL0/EL1 AArch64، FP، SIMD، GICv3 */
     case SR(3,0,0,5,0): return 0x6; /* DFR0 */
-    case SR(3,0,0,6,0): return 0; /* ISAR0 */
+    case SR(3,0,0,6,0): return 0x11120; /* ISAR0: AES+PMULL وSHA1 وSHA256 وCRC32 */
     case SR(3,0,0,6,1): return 0;
     case SR(3,0,0,7,0): return 0x000000000F000005ULL; /* MMFR0: PA 48 بت، 4K فقط */
     case SR(3,0,0,7,1): return 0;
