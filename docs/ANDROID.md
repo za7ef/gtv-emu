@@ -50,3 +50,30 @@
 ## ملاحظة أداء
 
 كان بطء نواة GKI على المترجم الفوري سببه تفريغ ذاكرة الترجمة كاملة كلما عدّلت النواة شيفرتها (‏static keys وalternatives). أصبح الإبطال الآن على مستوى الصفحة (التفاصيل في [JIT.md](JIT.md)). تحت qemu ولأول 200 مليون تعليمة: من 26.7 ثانية و165 تفريغة كاملة إلى 13.1 ثانية مع تفريغة واحدة و296 إبطال صفحة. أرقام qemu مشوّهة ولا تمثل جهازًا حقيقيًا.
+
+## المرحلة السادسة: المرحلة الثانية من init ثم SurfaceFlinger
+
+### ما يعمل (مُثبت بسجل الإقلاع في [boot-log-m6.txt](boot-log-m6.txt))
+- إقلاع نواة GKI الرسمية 6.1 مع صورة نظام مصغّرة (نحو 1233 ملفًا، 188 ميغابايت) مأخوذة من ملف target_files لبناء Cuttlefish رقم 16644040 (أندرويد 17)، وتُجلب الملفات المطلوبة فقط عبر طلبات النطاق دون تنزيل الأرشيف كاملًا.
+- المرحلة الأولى لـ init، ثم تحميل سياسة SELinux (وضع متساهل)، ثم «init second stage started!».
+- apexd-bootstrap وapexd يفعّلان حزم APEX الخاصة بالنظام والمورّد، ويعمل linkerconfig.
+- اختبار BoringSSL الذاتي (boringssl_self_test64) يمرّ بنجاح بعد إصلاحات المعالج.
+- logd وservicemanager وtombstoned والصدفة على المنفذ التسلسلي (getprop وps وlogcat).
+- خدمة التخصيص minigbm (allocator) تعمل.
+- SurfaceFlinger يبدأ ويهيّئ RenderEngine بالكامل: ‏ANGLE فوق Vulkan عبر SwiftShader (مع مترجم LLVM 16 داخل الضيف)، ‏OpenGL ES 3.1.
+- crash_dump64 يكتب تقارير الأعطال كاملة مع تتبّع المكدّس، وهذا يسهّل تشخيص المراحل القادمة.
+
+### إصلاحات المعالج في هذه المرحلة
+- **REV32**: كانت تُنفَّذ كأنها REV64، فيفشل اختبار SHA-256 في BoringSSL ويتوقف init بإشارة SIGABRT.
+- **امتدادات التشفير**: ‏AESE/AESD/AESMC/AESIMC وSHA1 وSHA256 وPMULL ذات 64 بت، مع إعلانها في ID_AA64ISAR0. تحقّقنا منها بمقارنة تفاضلية مع qemu.
+- **مجموعة «ثلاثة مختلفة»**: ‏UADDW/SADDW/USUBW/SSUBW وSQDMULL/SQDMLAL/SQDMLSL (مع علم FPSR.QC)، وتصحيح التقريب في RADDHN/RSUBHN. غياب UADDW كان يسبب SIGILL في الخدمات.
+
+### ما لم يكتمل بعد
+- خدمة المؤلِّف (HWC3، سواء ranchu أو drm_hwcomposer) تتوقف برسالة «gralloc-mapper is missing»، لأن مكتبة mapper.minigbm.so الموجودة في /vendor/lib64/hw لا تُحمَّل داخل مساحة الأسماء المعزولة لحزمة APEX الخاصة بالمؤلِّف. لذلك يتوقف SurfaceFlinger بعدها برسالة «Can't create AidlComposerClient»، ولم يُعرض أي إطار بعد.
+- جرّبنا إضافة مسارات /vendor إلى إعداد الرابط لقسم المؤلِّف فلم يكفِ ذلك؛ والخطوة التالية تتبّع خطأ dlopen الفعلي (مثلًا بتفعيل debug.ld.all) أو تشغيل مؤلِّف خارج APEX من /vendor/bin/hw.
+- الأداء نحو 66 مليون تعليمة في الثانية بالمفسّر وحده على هذا المضيف، فيستغرق الوصول إلى SurfaceFlinger نحو 10 دقائق.
+
+### إعادة الإنتاج
+- `android/scripts/build-system.sh <مجلد>`: يبني sys.img من قائمة `android/files.txt` مع ملفات rc في `android/rc/`.
+- `android/scripts/mkvendorboot.sh <مجلد-gki>`: يبني vendor_boot.img مع إعدادات bootconfig الخاصة بالرسوميات.
+- `android/scripts/run.sh <عدد-التعليمات> [إدخال]`: يشغّل المحاكي بذاكرة 768 ميغابايت ومعالجين.

@@ -1,0 +1,16 @@
+[    8.355155][    T1] init: init second stage started!
+[   29.221271][   T61] init: Wait for property 'apexd.status=activated' took 4405ms
+01-01 00:00:41.501   114   114 I RanchuHwc: RanchuHWC (HWComposer3/HWC3) starting up...
+01-01 00:00:47.309   116   121 I SurfaceFlinger: renderer  : ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 16.0.0) (0x0000C0DE)), SwiftShader driver-5.0.0)
+01-01 00:00:47.310   116   121 I SurfaceFlinger: version   : OpenGL ES 3.1 (ANGLE 2.1 git hash: 8d8796935e4faeaf19e67ac0a5949e71a5252e7f)
+01-01 00:00:47.404   114   114 E Gralloc5: Failed to load mapper.minigbm.so
+01-01 00:00:47.410   114   114 F GraphicBufferMapper: gralloc-mapper is missing
+01-01 00:00:49.464   133   133 F DEBUG   : Abort message: 'gralloc-mapper is missing'
+01-01 00:00:49.889   116   116 F SurfaceFlinger: Can't create AidlComposerClient
+01-01 00:00:52.174   140   140 I RanchuHwc: RanchuHWC (HWComposer3/HWC3) starting up...
+01-01 00:00:54.973   139   146 I SurfaceFlinger: renderer  : ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 16.0.0) (0x0000C0DE)), SwiftShader driver-5.0.0)
+01-01 00:00:54.973   139   146 I SurfaceFlinger: version   : OpenGL ES 3.1 (ANGLE 2.1 git hash: 8d8796935e4faeaf19e67ac0a5949e71a5252e7f)
+[    8.355155][    T1] init: init second stage started!
+[   10.255375][    T1] init: Added '/system/etc/init/hw/init.boringssl.zygote64.rc' to import list
+[   10.424626][    T1] init: Parsing file /system/etc/init/hw/init.boringssl.zygote64.rc...
+[   18.957790][    T1] init: processing action (ro.product.cpu.abilist64=* && init) from (/system/etc/init/hw/init.boringssl.zygote64.rc:2)
