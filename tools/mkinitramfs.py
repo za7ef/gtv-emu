@@ -23,6 +23,7 @@ echo
 echo "=== gtv-emu: shell ready ==="
 uname -a
 for m in /lib/modules/*.ko; do [ -f "$m" ] && insmod "$m"; done
+grep -q " /dev tmpfs" /proc/mounts && { sleep 1; mdev -s; }
 sleep 1
 if [ -b /dev/vda ]; then
   echo "virtio-blk: /dev/vda sectors=$(cat /sys/block/vda/size)"
@@ -49,6 +50,15 @@ case "$1" in bound|renew)
 esac
 '''
 
+# عند غياب devtmpfs (كما في نواة GKI) يبني mdev العقد في المسارات التي يتوقعها ALSA وevdev وDRM
+MDEV = '''pcmC[0-9]+D[0-9]+[pc] 0:0 660 =snd/
+controlC[0-9]+ 0:0 660 =snd/
+timer 0:0 660 =snd/
+event[0-9]+ 0:0 660 =input/
+card[0-9]+ 0:0 660 =dri/
+renderD[0-9]+ 0:0 660 =dri/
+'''
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('busybox')
@@ -64,6 +74,7 @@ def main():
     data += entry('bin/busybox', stat.S_IFREG | 0o755, open(a.busybox, 'rb').read())
     data += entry('bin/sh', stat.S_IFLNK | 0o777, b'busybox')
     data += entry('init', stat.S_IFREG | 0o755, INIT.encode())
+    data += entry('etc/mdev.conf', stat.S_IFREG | 0o644, MDEV.encode())
     data += entry('etc/udhcpc.sh', stat.S_IFREG | 0o755, UDHCPC.encode())
     data += entry('etc/hostname', stat.S_IFREG | 0o644, b'gtv-emu\n')
     made = set()
