@@ -30,8 +30,9 @@ python3 "$ROOT/tools/mkinitramfs.py" bb/bin/busybox.static initrd.gz \
     --module "$M/virtio/virtio_mmio.ko" --module "$M/block/virtio_blk.ko"
 python3 -c "d=bytearray(4<<20); d[0:24]=b'GTV-DISK-HELLO-FROM-HOST'; open('disk.img','wb').write(d)"
 
-"$ROOT/gtv-emu" -k Image -i initrd.gz -d disk.img --max-insns 20000000000 \
-    --feed "$(printf '\001\001\001echo SHELL-$((6*7)); poweroff -f\r')" > boot.log 2> emu.log || true
+# EMU_WRAP يسمح بالتشغيل عبر qemu-aarch64 على مضيف x86، وEMU_ARGS لتمرير --no-jit مثلًا
+$EMU_WRAP "${EMU:-$ROOT/gtv-emu}" $EMU_ARGS -k Image -i initrd.gz -d disk.img --max-insns 20000000000 \
+    --feed "$(printf '\002echo SHELL-$((6*7)); poweroff -f\r')" > boot.log 2> emu.log || true
 
 fail=0
 check() { if grep -q "$1" "$2"; then echo "نجح: $3"; else echo "فشل: $3"; fail=1; fi; }
