@@ -9,7 +9,7 @@ jobs:
       - name: البناء
         run: CC=gcc ./build.sh
       - name: اختبارات الوحدة
-        run: gcc -O1 -w -o unit tests/unit_test.c core/simd.c core/devices.c core/fdt.c -lm && ./unit
+        run: gcc -O1 -w -o unit tests/unit_test.c core/simd.c core/devices.c core/fdt.c core/jit.c -lm && ./unit
       - name: اختبار الإقلاع
         run: ./tests/boot_test.sh
       - name: حفظ سجل الإقلاع
@@ -18,3 +18,14 @@ jobs:
         with:
           name: boot-log
           path: /tmp/gtv-emu-test/boot.log
+  # اختبار المترجم الفوري على معالج ARM64 حقيقي، مع مقارنة السرعة بالمفسّر
+  jit-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: البناء
+        run: CC=gcc ./build.sh
+      - name: اختبار الإقلاع بالمترجم الفوري
+        run: ./tests/boot_test.sh && grep -E "توقف|JIT" /tmp/gtv-emu-test/emu.log
+      - name: اختبار الإقلاع بالمفسّر وحده للمقارنة
+        run: EMU_ARGS=--no-jit ./tests/boot_test.sh && grep "توقف" /tmp/gtv-emu-test/emu.log
