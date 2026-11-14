@@ -48,7 +48,7 @@ for line in open(base + '/modules.dep'):
     dep[k] = v.split()
 want = ['kernel/drivers/virtio/virtio_mmio.ko.gz', 'kernel/drivers/block/virtio_blk.ko.gz',
         'kernel/drivers/net/virtio_net.ko.gz', 'kernel/drivers/gpu/drm/virtio/virtio-gpu.ko.gz',
-        'kernel/drivers/virtio/virtio_input.ko.gz', 'kernel/sound/virtio/virtio_snd.ko.gz', 'kernel/net/packet/af_packet.ko.gz']
+        'kernel/drivers/virtio/virtio_input.ko.gz', 'kernel/sound/virtio/virtio_snd.ko.gz', 'kernel/net/packet/af_packet.ko.gz', 'kernel/drivers/input/evdev.ko.gz']
 order = []
 def visit(m):
     if m in order: return
@@ -82,9 +82,10 @@ case "${HTTP_PROXY:-$http_proxy}" in
 esac
 sleep 1
 $EMU_WRAP "${EMU:-$ROOT/gtv-emu}" --smp ${SMP:-4} $EMU_ARGS -k Image -i initrd.gz -d disk.img --max-insns 40000000000 \
+    --events "key:HOME;key:OK;key:BACK;tap:640,360;swipe:100,300,900,300" \
     --keys "$(printf 'echo KBD-$((6*7)) > /tmp/kbd.txt; echo typed on virtio keyboard; ls /dev/dri\r')" \
     --screenshot screen.png --audio out.wav \
-    --feed "$(printf '\002\003\001\001\001ip link set eth0 up; udhcpc -i eth0 -n -q -s /etc/udhcpc.sh; ping -c 2 10.0.2.2; wget -q -O - http://10.0.2.2:8123/nat.txt; '"$GUEST_PROXY"' wget -q -T 10 -O - http://example.com/ | grep -o Example.Domain | head -1; cat /tmp/kbd.txt\r\002echo CPUS-$(nproc); for i in 1 2 3 4; do (j=0; while [ $j -lt 4000 ]; do j=$((j+1)); done; echo PAR-$i) & done; wait; grep -E IPI[01]: /proc/interrupts\r\002/usr/bin/aplay -D hw:0,0 /tone.wav && echo APLAY-OK\r\002echo SHELL-$((6*7)); poweroff -f\r')" > boot.log 2> emu.log || true
+    --feed "$(printf '\002\003\001\001\001ip link set eth0 up; udhcpc -i eth0 -n -q -s /etc/udhcpc.sh; ping -c 2 10.0.2.2; wget -q -O - http://10.0.2.2:8123/nat.txt; '"$GUEST_PROXY"' wget -q -T 10 -O - http://example.com/ | grep -o Example.Domain | head -1; cat /tmp/kbd.txt\r\002echo CPUS-$(nproc); for i in 1 2 3 4; do (j=0; while [ $j -lt 4000 ]; do j=$((j+1)); done; echo PAR-$i) & done; wait; grep -E IPI[01]: /proc/interrupts\r\002K=$(grep -l keyboard /sys/class/input/event*/device/name | cut -d/ -f5); T=$(grep -l touchscreen /sys/class/input/event*/device/name | cut -d/ -f5); echo INPUT-DEVS $K $T; cat /dev/input/$K > /tmp/k.bin & P1=$!; cat /dev/input/$T > /tmp/t.bin & P2=$!; while [ $(ls /proc/$P1/fd /proc/$P2/fd 2>/dev/null | grep -c "^3$") -lt 2 ]; do sleep 0.2; done; echo READERS-READY\r\002\004\001i=0; while [ $i -lt 90 ] && [ $(wc -c </tmp/k.bin) -lt 288 -o $(wc -c </tmp/t.bin) -lt 1000 ]; do sleep 1; i=$((i+1)); done; sleep 1; kill $P1 $P2; od -An -tu2 -w24 /tmp/k.bin /tmp/t.bin | awk '"'"'$9>0{print "EV",$9,$10,$11}'"'"' | sort | uniq -c\r\002/usr/bin/aplay -D hw:0,0 /tone.wav && echo APLAY-OK\r\002echo SHELL-$((6*7)); poweroff -f\r')" > boot.log 2> emu.log || true
 
 kill $HTTP_PID 2>/dev/null || true
 fail=0
@@ -103,6 +104,14 @@ check "^KBD-42" boot.log "الكتابة عبر لوحة مفاتيح virtio-inp
 check "smp: Brought up 1 node, ${SMP:-4} CPU" boot.log "تشغيل ${SMP:-4} معالجات عبر PSCI"
 check "^CPUS-${SMP:-4}" boot.log "رؤية الصدفة لكل المعالجات"
 if [ "$(grep -c '^PAR-' boot.log)" = 4 ]; then echo "نجح: أربع مهام متوازية"; else echo "فشل: أربع مهام متوازية"; fail=1; fi
+check "INPUT-DEVS event[0-9] event[0-9]" boot.log "ظهور لوحة المفاتيح وشاشة اللمس كجهازي إدخال"
+check "EV 1 172 1" boot.log "الريموت: زر الرئيسية (HOME)"
+check "EV 1 353 1" boot.log "الريموت: زر الاختيار (OK)"
+check "EV 1 158 1" boot.log "الريموت: زر الرجوع (BACK)"
+check "EV 3 53 640" boot.log "اللمس: نقرة بالإحداثي السيني الصحيح"
+check "EV 3 54 360" boot.log "اللمس: نقرة بالإحداثي الصادي الصحيح"
+check "EV 3 53 900" boot.log "اللمس: نهاية السحب"
+check "EV 1 330 1" boot.log "اللمس: ضغط BTN_TOUCH"
 check "^APLAY-OK" boot.log "تشغيل الصوت عبر virtio-snd (aplay)"
 if python3 -c "
 import sys
@@ -111,4 +120,33 @@ sys.exit(0 if b[:4] == b'RIFF' and b[44:44+len(a)] == a else 1)" 2>/dev/null; th
 check "لقطة شاشة 1280x720" emu.log "لقطة شاشة من الإطار المعروض"
 if head -c 600 disk.img | grep -aq "WRITTEN-BY-GUEST"; then echo "نجح: الكتابة على قرص virtio"; else echo "فشل: الكتابة على قرص virtio"; fail=1; fi
 grep -E "توقف|JIT|gpu" emu.log
+
+# ===== المرحلة الرابعة: مسار إقلاع أندرويد بنواة GKI الرسمية من Google =====
+# تُنزَّل صورة boot.img موقّعة (android14-6.1، النواة مضغوطة بـgzip)، وتُبنى vendor_boot.img
+# تحمل القرص الأولي وbootconfig، ثم يُقلع المحاكي الصورتين مباشرة. عطّلها بـGKI=0.
+GKI_ZIP=gki-certified-boot-android14-6.1-2026-09_r8-gz.zip
+if [ "${GKI:-1}" = 1 ]; then
+  mkdir -p gki
+  [ -f gki/boot-6.1-gz.img ] || { curl -sf -o gki/g.zip "https://dl.google.com/android/gki/$GKI_ZIP" && (cd gki && unzip -o -q g.zip && rm -f g.zip); }
+  if [ -f gki/boot-6.1-gz.img ]; then
+    python3 "$ROOT/tools/mkinitramfs.py" bb/bin/busybox.static gki/initrd.gz
+    python3 "$ROOT/tools/mkbootimg.py" --vendor-ramdisk gki/initrd.gz \
+      --vendor-cmdline "console=ttyAMA0 earlycon=pl011,0x09000000 rdinit=/init" \
+      --bootconfig androidboot.hardware=gtv --bootconfig androidboot.slot_suffix=_a --vendor-out gki/vendor_boot.img
+    $EMU_WRAP "${EMU:-$ROOT/gtv-emu}" --smp 2 $EMU_ARGS --bootimg gki/boot-6.1-gz.img --vendor-boot gki/vendor_boot.img \
+      --androidboot serialno=GTV0001 -a "" --max-insns 40000000000 \
+      --feed "$(printf '\002uname -r; cat /proc/bootconfig; grep -c binder /proc/filesystems; echo GKI-SHELL-$((6*7)); poweroff -f\r')" \
+      > gki/boot.log 2> gki/emu.log || true
+    check "boot.img إصدار 4 مع vendor_boot" gki/emu.log "أندرويد: قراءة boot.img وvendor_boot.img (الإصدار 4) وفك ضغط النواة"
+    check "Linux version 6.1.*android14" gki/boot.log "أندرويد: إقلاع نواة GKI الرسمية"
+    check "Load bootconfig: .* bytes" gki/boot.log "أندرويد: تحميل bootconfig في النواة"
+    check 'androidboot.hardware = "gtv"' gki/boot.log "أندرويد: خصائص vendor_boot في /proc/bootconfig"
+    check 'androidboot.serialno = "GTV0001"' gki/boot.log "أندرويد: خصائص --androidboot في /proc/bootconfig"
+    check "smp: Brought up 1 node, 2 CPUs" gki/boot.log "أندرويد: معالجان مع نواة GKI"
+    check "^GKI-SHELL-42" gki/boot.log "أندرويد: صدفة تعمل فوق نواة GKI"
+    grep -E "boot.img|توقف" gki/emu.log
+  else
+    echo "تخطٍّ: تعذّر تنزيل نواة GKI"
+  fi
+fi
 exit $fail
