@@ -17,7 +17,6 @@ targets:
     sources:
       - path: GTVEmu
       - path: ../core
-        group: Core
         excludes:
           - main.c
     info:
