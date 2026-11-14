@@ -2,6 +2,8 @@
  * القرص (blk) والشبكة (net) والرسوميات (gpu) والإدخال (input).
  */
 #include "emu.h"
+#include "host.h"
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -197,6 +199,48 @@ static void gpu_res_free(GpuRes *r) {
     memset(r, 0, sizeof(*r));
 }
 
+/* ===== الإطار الأمامي للواجهات المضمِّنة =====
+ * يُنسخ الإطار المعروض عند كل RESOURCE_FLUSH إلى مخزن محمي بقفل، فتقرؤه الواجهة من خيطها
+ * دون أن تلمس موارد الضيف التي قد تُحرَّر في أي لحظة. */
+static pthread_mutex_t front_mu = PTHREAD_MUTEX_INITIALIZER;
+static uint32_t *front_pix; static uint32_t front_w, front_h; static uint64_t front_gen;
+
+static void gpu_publish(Gpu *g) {
+    if (!gtv_host) return;
+    GpuRes *r = gpu_find(g, g->scanout_res);
+    if (!r || !r->pix) return;
+    pthread_mutex_lock(&front_mu);
+    if (front_w != r->w || front_h != r->h) {
+        free(front_pix); front_pix = malloc((size_t)r->w * r->h * 4);
+        front_w = front_pix ? r->w : 0; front_h = front_pix ? r->h : 0;
+    }
+    if (front_pix) {
+        size_t n = (size_t)r->w * r->h;
+        switch (r->fmt) { /* توحيد الصيغة إلى BGRA (B في البايت الأدنى) */
+        case 1: case 2: memcpy(front_pix, r->pix, n * 4); break;
+        case 3: case 4: for (size_t i = 0; i < n; i++) { uint32_t p = r->pix[i]; front_pix[i] = __builtin_bswap32(p); } break;
+        case 67: case 134: for (size_t i = 0; i < n; i++) { uint32_t p = r->pix[i]; front_pix[i] = (p & 0xFF00FF00u) | ((p & 0xFF) << 16) | ((p >> 16) & 0xFF); } break;
+        default: for (size_t i = 0; i < n; i++) { uint32_t p = r->pix[i]; front_pix[i] = (p >> 8) | 0xFF000000u; } break;
+        }
+        front_gen++;
+    }
+    pthread_mutex_unlock(&front_mu);
+    if (gtv_host->frame_ready) gtv_host->frame_ready(gtv_host->ctx);
+}
+
+uint64_t gtv_copy_frame(void *dst, size_t cap, uint32_t *w, uint32_t *h) {
+    uint64_t gen = 0;
+    pthread_mutex_lock(&front_mu);
+    if (front_pix && front_gen) {
+        *w = front_w; *h = front_h;
+        size_t need = (size_t)front_w * front_h * 4;
+        if (dst && cap >= need) memcpy(dst, front_pix, need);
+        gen = front_gen;
+    }
+    pthread_mutex_unlock(&front_mu);
+    return gen;
+}
+
 static void gpu_cfg(VDev *d, uint8_t *cfg) {
     (void)d;
     uint32_t num_scanouts = 1;
@@ -258,7 +302,7 @@ static void gpu_cmd(Machine *m, Gpu *g, const uint8_t *req, uint32_t rl, uint8_t
         }
         break;
     }
-    case 0x0104: g->flushes++; break; /* RESOURCE_FLUSH */
+    case 0x0104: g->flushes++; gpu_publish(g); break; /* RESOURCE_FLUSH */
     case 0x0105: { /* TRANSFER_TO_HOST_2D */
         uint32_t x = U32(0), y = U32(4), w = U32(8), h = U32(12);
         uint64_t off; memcpy(&off, a + 16, 8);
@@ -569,6 +613,35 @@ static void events_poll(void) {
     ev_next = host_ns() + delay;
 }
 
+/* ===== أحداث من خيوط أخرى (واجهة iOS) =====
+ * تُخزَّن في حلقة محمية بقفل، وتُفرَّغ في طوابير الأجهزة من خيط المحاكي داخل virtio_poll. */
+static pthread_mutex_t post_mu = PTHREAD_MUTEX_INITIALIZER;
+static int32_t post_q[1024][4]; static int post_h, post_t;
+
+static void post_push(int kind, int a, int b, int c) {
+    pthread_mutex_lock(&post_mu);
+    int nx = (post_h + 1) % 1024;
+    if (nx != post_t) { post_q[post_h][0] = kind; post_q[post_h][1] = a; post_q[post_h][2] = b; post_q[post_h][3] = c; post_h = nx; }
+    pthread_mutex_unlock(&post_mu);
+}
+void gtv_post_key(int code, int down) { post_push(0, code, down, 0); }
+void gtv_post_touch(int x, int y, int phase) {
+    if (x < 0) x = 0; if (x > TOUCH_W - 1) x = TOUCH_W - 1;
+    if (y < 0) y = 0; if (y > TOUCH_H - 1) y = TOUCH_H - 1;
+    post_push(1, x, y, phase);
+}
+static int posted_pending(void) { return post_h != post_t; }
+static void posted_drain(void) {
+    pthread_mutex_lock(&post_mu);
+    while (post_t != post_h) {
+        int32_t *e = post_q[post_t];
+        if (e[0] == 0 && g_kbd) { input_queue(g_kbd, 1, e[1], e[2] ? 1 : 0); input_queue(g_kbd, 0, 0, 0); }
+        else if (e[0] == 1 && g_touch) touch_point(g_touch, e[1], e[2], e[3] == 0 ? 1 : e[3] == 1 ? 2 : 0);
+        post_t = (post_t + 1) % 1024;
+    }
+    pthread_mutex_unlock(&post_mu);
+}
+
 void input_set_keys(Machine *m, const char *keys) { (void)m; if (g_kbd) g_kbd->keys = keys; }
 void input_arm_keys(Machine *m) { (void)m; if (g_kbd && g_kbd->keys) g_kbd->keys_armed = 1; }
 
@@ -714,6 +787,10 @@ static void snd_notify(Machine *m, VDev *d, int qi) {
             uint32_t pcm = rl > 4 ? rl - 4 : 0;
             snd_wav_open(s);
             if (s->wav && pcm) { fwrite(buf + 4, 1, pcm, s->wav); s->data_bytes += pcm; }
+            if (gtv_host && gtv_host->audio_out && pcm) {
+                int ch = s->channels ? s->channels : 2;
+                gtv_host->audio_out(gtv_host->ctx, (const int16_t *)(buf + 4), pcm / (2 * ch), snd_rate_hz(s), ch);
+            }
             s->total_bytes += pcm;
             uint8_t stat[8] = {0}; uint32_t ok = 0x8000; memcpy(stat, &ok, 4);
             chain_write(m, v, n, stat, 8);
@@ -854,6 +931,7 @@ void virtio_create_all(Machine *m, const char *disk, const char *keys, const cha
 }
 
 void virtio_poll(Machine *m) {
+    if (posted_pending()) posted_drain();
     for (int i = 0; i < VIRTIO_COUNT; i++) {
         VDev *d = m->virtio[i];
         if (!d || !(d->status & 4)) continue; /* DRIVER_OK */
@@ -867,6 +945,7 @@ int virtio_has_work(Machine *m) {
     (void)m;
     if (g_snd && g_snd->pt != g_snd->ph) return 1;
     if (netstack_active()) return 1;
+    if (posted_pending()) return 1;
     if (ev_armed && ev_script && *ev_script) return 1;
     return g_kbd && g_kbd->keys_armed && g_kbd->keys && *g_kbd->keys;
 }

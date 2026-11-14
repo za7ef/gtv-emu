@@ -84,11 +84,19 @@ cc -O1 -o unit tests/unit_test.c core/simd.c core/devices.c core/virtio.c core/n
 - `core/fdt.c`: بناء شجرة الأجهزة.
 - `core/jit.c`: المترجم الفوري من A64 إلى A64.
 - `core/main.c`: واجهة سطر الأوامر.
+- `core/gtv.h` و`core/gtv_api.c` و`core/host.h`: الواجهة البرمجية لتضمين المحاكي في تطبيق.
+- `ios/`: تطبيق iOS بواجهة SwiftUI، ويُولَّد مشروعه بأداة XcodeGen. التفاصيل في [docs/IOS.md](docs/IOS.md).
+- `.github/workflows/ios.yml`: بناء ملف IPA غير موقّع على macOS، و`release-assets.yml`: نشر صور التطبيق.
+- `tools/mkios-assets.sh`: بناء صور التطبيق وملف manifest.json.
 - `tools/mkinitramfs.py`: بناء initramfs دون أداة cpio.
 - `tests/`: اختبارات الوحدة واختبار الإقلاع.
 - `docs/ROADMAP.md`: خطة المراحل التالية.
 - `docs/JIT.md`: تصميم المترجم الفوري ووضع JIT على iOS والقياسات.
 - `docs/ci-workflow.yml`: ملف التكامل المستمر، ويُنقل يدويًا إلى `.github/workflows/`.
+
+## تطبيق iOS
+
+يشغّل التطبيق المحرك نفسه على iPhone، مع عرض Metal ولمس وريموت وصوت وطرفية وتنزيل للصور. يعمل JIT عبر StikDebug (مسار TXM في iOS 26 وما بعده)، ويعمل المفسّر حين لا يتاح JIT. التفاصيل في [docs/IOS.md](docs/IOS.md).
 
 ## المراحل التالية
 

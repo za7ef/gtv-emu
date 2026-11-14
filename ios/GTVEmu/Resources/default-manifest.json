@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "profiles": [
+    {
+      "id": "alpine-test",
+      "name": "Alpine Linux (اختبار)",
+      "kind": "linux",
+      "description": "نواة Alpine linux-virt مع busybox ووحدات virtio وaplay. تقلع إلى صدفة على الطرفية خلال ثوانٍ مع JIT، وتختبر الشاشة واللمس والريموت والصوت.",
+      "ramMB": 512,
+      "cores": 2,
+      "files": [
+        {
+          "role": "kernel",
+          "name": "alpine-Image.gz",
+          "size": 9577960
+        },
+        {
+          "role": "initrd",
+          "name": "alpine-initrd.gz",
+          "size": 2458621
+        }
+      ]
+    },
+    {
+      "id": "android-gtv",
+      "name": "أندرويد (GKI 6.1 + Cuttlefish 16)",
+      "kind": "android",
+      "description": "نواة GKI الرسمية مع vendor_boot خاص وصورة نظام مصغّرة. تصل إلى شاشة الإقلاع؛ تحتاج JIT ووقتًا طويلًا.",
+      "ramMB": 1024,
+      "cores": 2,
+      "files": [
+        {
+          "role": "boot",
+          "name": "android-boot.img"
+        },
+        {
+          "role": "vendor_boot",
+          "name": "android-vendor_boot.img"
+        },
+        {
+          "role": "init_boot",
+          "name": "android-init_boot.img"
+        },
+        {
+          "role": "disk",
+          "name": "android-system.img",
+          "asset": "android-system.img.gz",
+          "gunzip": true
+        }
+      ]
+    }
+  ]
+}

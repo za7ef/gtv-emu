@@ -2,3 +2,7 @@ gtv-emu
 unit
 *.o
 tools/__pycache__/
+ios/build/
+ios/Payload/
+ios/*.ipa
+ios/GTVEmu.xcodeproj/

@@ -1,5 +1,6 @@
 /* gtv-emu — الأجهزة: GICv3 والمؤقت العام وPL011 (أجهزة virtio في virtio.c). */
 #include "emu.h"
+#include "host.h"
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,6 +9,8 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/types.h>
+
+GtvHost *gtv_host; /* NULL في واجهة سطر الأوامر */
 
 #define SR(op0, op1, crn, crm, op2) (((op0) << 14) | ((op1) << 11) | ((crn) << 7) | ((crm) << 3) | (op2))
 
@@ -379,6 +382,7 @@ int uart_has_input(Machine *m) {
         if (!blocked) return 1;
         return virtio_has_work(m);
     }
+    if (gtv_host && gtv_host->console_in_ready) return gtv_host->console_in_ready(gtv_host->ctx) || virtio_has_work(m);
     return poll(&p, 1, 0) > 0;
 }
 
@@ -407,7 +411,8 @@ void uart_poll(Machine *m) {
         int space = 250 - rx_count(u);
         if (space > 64) space = 64;
         if (space > 0) {
-            ssize_t n = read(0, buf, space);
+            ssize_t n = gtv_host && gtv_host->console_in ? (ssize_t)gtv_host->console_in(gtv_host->ctx, buf, space)
+                                                         : read(0, buf, space);
             for (ssize_t i = 0; i < n; i++) {
                 char ch = buf[i] == '\n' ? '\r' : buf[i];
                 u->rx[u->rx_head] = ch; u->rx_head = (u->rx_head + 1) & 255; changed = 1;
@@ -455,7 +460,9 @@ void uart_write(Machine *m, uint64_t off, int size, uint64_t v) {
     UART *u = m->uart;
     (void)size;
     switch (off) {
-    case 0x00: { char ch = v & 0xFF; if (write(1, &ch, 1) < 0) {}
+    case 0x00: { char ch = v & 0xFF;
+        if (gtv_host && gtv_host->console_out) gtv_host->console_out(gtv_host->ctx, &ch, 1);
+        else if (write(1, &ch, 1) < 0) {}
         UART *uu = m->uart; if (uu->last_tx == '#' && ch == ' ') uu->prompt_seen = 1; uu->last_tx = ch;
         uart_irq(m); return; }
     case 0x24: u->ibrd = v; return;

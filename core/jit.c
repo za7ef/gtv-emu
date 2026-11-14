@@ -61,18 +61,83 @@ typedef struct Jit {
 
 /* ---------- الذاكرة القابلة للتنفيذ ---------- */
 /* نتبع نموذج W^X: نافذتان للذاكرة نفسها، واحدة للكتابة وأخرى للتنفيذ، كما يتطلب iOS. */
-static int jit_alloc(Jit *j) {
+static int jit_mode;             /* GTV_JIT_AUTO وأخواته من gtv.h */
+static char jit_status_buf[200] = "لم تُجرَّب بعد";
+void gtv_set_jit_mode(int mode) { jit_mode = mode; }
+const char *gtv_jit_status(void) { return jit_status_buf; }
+#define JIT_STATUS(...) snprintf(jit_status_buf, sizeof jit_status_buf, __VA_ARGS__)
+
 #if defined(__APPLE__)
-    /* على iOS/macOS: حجز RW ثم إنشاء نسخة RX من الصفحات نفسها عبر vm_remap.
-     * يتطلب ذلك تفعيل JIT عبر مصحّح مرفق (StikDebug على iOS). */
+#include <TargetConditionals.h>
+#include <sys/sysctl.h>
+extern int csops(int pid, unsigned int ops, void *useraddr, size_t usersize);
+#define CS_DEBUGGED 0x10000000
+
+/* هل يوجد مصحّح مرفق منح العملية صلاحية JIT (StikDebug أو Xcode)؟ */
+static int cs_debugged(void) {
+    uint32_t f = 0;
+    if (csops(getpid(), 0, &f, sizeof f) != 0) return 0;
+    return (f & CS_DEBUGGED) != 0;
+}
+
+static int os_major(void) {
+    char b[32] = {0}; size_t n = sizeof b - 1;
+    if (sysctlbyname("kern.osproductversion", b, &n, NULL, 0) != 0) return 0;
+    return atoi(b);
+}
+
+/* «استدعاء» بروتوكول StikDebug لـ TXM ‏(iOS 26 وما بعده): يتوقف التنفيذ عند brk #0xf00d،
+ * فيقرأ سكربت StikDebug العام (universal.js) رقم الأمر من x16 والوسائط من x0 وx1،
+ * ثم يكتب النتيجة في x0 ويتابع. الأمر 1 (PrepareRegion) مع x0 = 0 يحجز منطقة RX
+ * بحجم x1 ويهيئها لدى TXM، ويعيد عنوانها. يجب ألا تُنفَّذ إلا والمصحّح مرفق، وإلا انهار التطبيق. */
+__attribute__((noinline, naked)) static void *jit26_prepare_region(void *addr, size_t len) {
+    __asm__ volatile("mov x16, #1\n"
+                     "brk #0xf00d\n"
+                     "ret");
+}
+
+static int jit_alloc_txm(Jit *j) {
+    void *rxp = jit26_prepare_region(NULL, CODE_SIZE);
+    if (!rxp || (uintptr_t)rxp == 0xE0000069) { JIT_STATUS("TXM: لم يُعِد المصحّح منطقة RX (هل السكربت universal.js مفعّل في StikDebug؟)"); return 0; }
+    vm_address_t rx = (vm_address_t)rxp, rw = 0;
+    vm_prot_t cur, max;
+    /* نافذة كتابة تشير إلى الصفحات الفيزيائية نفسها */
+    kern_return_t kr = vm_remap(mach_task_self(), &rw, CODE_SIZE, 0, VM_FLAGS_ANYWHERE, mach_task_self(), rx, FALSE,
+                                &cur, &max, VM_INHERIT_NONE);
+    if (kr != KERN_SUCCESS) { JIT_STATUS("TXM: فشل vm_remap ‏(%d)", kr); return 0; }
+    if (mprotect((void *)rw, CODE_SIZE, PROT_READ | PROT_WRITE) != 0) { JIT_STATUS("TXM: فشل mprotect لنافذة الكتابة"); return 0; }
+    j->rw = (uint8_t *)rw; j->rx = (uint8_t *)rx;
+    JIT_STATUS("مفعّل: مسار TXM عبر StikDebug (iOS %d)", os_major());
+    return 1;
+}
+
+/* المسار القديم (قبل TXM، وعلى macOS): حجز RW ثم نسخة RX عبر vm_remap */
+static int jit_alloc_legacy(Jit *j) {
     vm_address_t rw = 0, rx = 0;
-    if (vm_allocate(mach_task_self(), &rw, CODE_SIZE, VM_FLAGS_ANYWHERE) != KERN_SUCCESS) return 0;
+    if (vm_allocate(mach_task_self(), &rw, CODE_SIZE, VM_FLAGS_ANYWHERE) != KERN_SUCCESS) { JIT_STATUS("فشل vm_allocate"); return 0; }
     vm_prot_t cur, max;
     if (vm_remap(mach_task_self(), &rx, CODE_SIZE, 0, VM_FLAGS_ANYWHERE, mach_task_self(), rw, 0,
-                 &cur, &max, VM_INHERIT_NONE) != KERN_SUCCESS) return 0;
-    if (mprotect((void *)rx, CODE_SIZE, PROT_READ | PROT_EXEC) != 0) return 0;
+                 &cur, &max, VM_INHERIT_NONE) != KERN_SUCCESS) { JIT_STATUS("فشل vm_remap"); return 0; }
+    if (mprotect((void *)rx, CODE_SIZE, PROT_READ | PROT_EXEC) != 0) { JIT_STATUS("رفض النظام صفحات RX (JIT غير مفعّل)"); return 0; }
     j->rw = (uint8_t *)rw; j->rx = (uint8_t *)rx;
+    JIT_STATUS("مفعّل: المسار القديم (vm_remap)");
     return 1;
+}
+#endif
+
+static int jit_alloc(Jit *j) {
+    if (jit_mode == 3) { JIT_STATUS("معطّل من الإعدادات"); return 0; }
+#if defined(__APPLE__)
+#if TARGET_OS_IPHONE
+    if (!cs_debugged()) { JIT_STATUS("لا يوجد مصحّح مرفق؛ شغّل التطبيق من StikDebug لتفعيل JIT"); return 0; }
+    if (jit_mode == 1) return jit_alloc_txm(j);
+    if (jit_mode == 2) return jit_alloc_legacy(j);
+    /* تلقائي: TXM في iOS 26 فما فوق، ثم المسار القديم */
+    if (os_major() >= 26) return jit_alloc_txm(j);
+    return jit_alloc_legacy(j);
+#else
+    return jit_alloc_legacy(j);
+#endif
 #else
 #ifdef __linux__
     extern int memfd_create(const char *, unsigned int);
@@ -81,12 +146,13 @@ static int jit_alloc(Jit *j) {
         void *rw = mmap(NULL, CODE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         void *rx = mmap(NULL, CODE_SIZE, PROT_READ | PROT_EXEC, MAP_SHARED, fd, 0);
         close(fd);
-        if (rw != MAP_FAILED && rx != MAP_FAILED) { j->rw = rw; j->rx = rx; return 1; }
+        if (rw != MAP_FAILED && rx != MAP_FAILED) { j->rw = rw; j->rx = rx; JIT_STATUS("مفعّل: memfd بنافذتين"); return 1; }
     }
 #endif
     void *p = mmap(NULL, CODE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (p == MAP_FAILED) return 0;
+    if (p == MAP_FAILED) { JIT_STATUS("رفض النظام ذاكرة قابلة للتنفيذ"); return 0; }
     j->rw = j->rx = p;
+    JIT_STATUS("مفعّل: RWX");
     return 1;
 #endif
 }
@@ -797,6 +863,9 @@ void jit_stats(Machine *m) {
 }
 
 #else /* لا يوجد مضيف ARM64: يعمل المفسّر وحده */
+
+void gtv_set_jit_mode(int mode) { (void)mode; }
+const char *gtv_jit_status(void) { return "غير متاح: المضيف ليس ARM64"; }
 
 void *jit_create(Machine *m) { (void)m; return NULL; }
 int jit_page_is_code(Machine *m, uint64_t pa) { (void)m; (void)pa; return 0; }
