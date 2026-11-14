@@ -599,6 +599,13 @@ static int exec_adv_simd(CPU *c, uint32_t insn) {
             }
             *vd = res; return 1;
         }
+        case 0x13: { /* SHLL / SHLL2: توسيع ثم إزاحة بعرض العنصر */
+            if (!U || esz > 4) return 0;
+            int m = 8 / esz;
+            for (int i = 0; i < m; i++)
+                set_lane(&res, esz * 2, i, lane(vn, esz, (Q ? m : 0) + i) << (esz * 8));
+            *vd = res; return 1;
+        }
         case 0x12: case 0x14: { /* XTN / SQXTN / UQXTN / SQXTUN */
             int wsz = esz * 2, m = 8 / esz;
             v128 out = Q ? *vd : (v128){0, 0};
@@ -635,6 +642,15 @@ static int exec_adv_simd(CPU *c, uint32_t insn) {
                 else if (opc == 0x0E && hi && !U) r = f < 0 ? MASK(fesz * 8) : 0;
                 else if ((opc == 0x18 || opc == 0x19) && !U) {
                     double rr = round_mode(f, opc == 0x18 ? (hi ? 1 : 0) : (hi ? 3 : 2));
+                    r = dbl ? d2u(rr) : f2u((float)rr);
+                } else if (opc == 0x18 && U && !hi) { /* FRINTA */
+                    double rr = round_mode(f, 4);
+                    r = dbl ? d2u(rr) : f2u((float)rr);
+                } else if (opc == 0x19 && U) { /* FRINTX / FRINTI: وضع التقريب الافتراضي (الأقرب) */
+                    double rr = round_mode(f, 0);
+                    r = dbl ? d2u(rr) : f2u((float)rr);
+                } else if (opc == 0x1D && hi) { /* FRECPE / FRSQRTE: قيمة دقيقة بدل التقدير */
+                    double rr = U ? 1.0 / sqrt(f) : 1.0 / f;
                     r = dbl ? d2u(rr) : f2u((float)rr);
                 } else return 0;
                 set_lane(&res, fesz, i, r);
@@ -834,6 +850,23 @@ static int exec_adv_simd_scalar(CPU *c, uint32_t insn) {
         int sz = __builtin_ctz(imm5), esz = 1 << sz, idx = imm5 >> (sz + 1);
         uint64_t x = lane(vn, esz, idx);
         c->v[rd].lo = x; c->v[rd].hi = 0;
+        return 1;
+    }
+    /* عائم قياسي بالعنصر: FMLA/FMLS/FMUL/FMULX (Vd, Vn, Vm.T[i]) */
+    if ((insn & 0xDF000400) == 0x5F000000 && BIT(insn, 23)) {
+        int opc = BITS(insn, 15, 12), H = BIT(insn, 11), L = BIT(insn, 21), M = BIT(insn, 20);
+        if (opc != 0x1 && opc != 0x5 && opc != 0x9) return 0;
+        if (U && opc != 0x9) return 0;
+        int dbl = BIT(insn, 22);
+        if (dbl && L) return 0;
+        int idx = dbl ? H : (H << 1) | L, mreg = (M << 4) | BITS(insn, 19, 16);
+        double b = dbl ? u2d(lane(&c->v[mreg], 8, idx)) : u2f(lane(&c->v[mreg], 4, idx));
+        double a = dbl ? u2d(lane(vn, 8, 0)) : u2f(lane(vn, 4, 0));
+        double d = dbl ? u2d(lane(&c->v[rd], 8, 0)) : u2f(lane(&c->v[rd], 4, 0));
+        double r;
+        if (dbl) r = opc == 0x9 ? a * b : (opc == 0x1 ? fma(a, b, d) : fma(-a, b, d));
+        else r = opc == 0x9 ? (float)a * (float)b : (opc == 0x1 ? fmaf((float)a, (float)b, (float)d) : fmaf(-(float)a, (float)b, (float)d));
+        c->v[rd].lo = dbl ? d2u(r) : f2u((float)r); c->v[rd].hi = 0;
         return 1;
     }
     /* ثلاثي متماثل قياسي */
