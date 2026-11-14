@@ -5,7 +5,7 @@
 محاكي مبنيّ من الصفر لمعمارية AArch64 (ARMv8-A)، هدفه تشغيل نظام Android TV / Google TV على أجهزة آيفون.
 النواة مكتوبة بلغة C قابلة للنقل، فتُختبر على لينكس ثم تُدمج لاحقًا في تطبيق iOS بواجهة SwiftUI وعرض عبر Metal.
 
-## الحالة الحالية: المرحلة الأولى مكتملة
+## الحالة الحالية: المرحلة الأولى مكتملة، والمرحلة الثانية (JIT) تعمل
 
 يُقلع المحاكي نواة لينكس حقيقية (Alpine linux-virt 6.12 لمعمارية arm64) مع initramfs حتى سطر أوامر busybox تفاعلي،
 ويقرأ ويكتب على قرص virtio، ويُطفئ النظام عبر PSCI.
@@ -22,6 +22,8 @@
 - **virtio-mmio:** قرص كتل (virtio-blk) بالإصدار الثاني من الواجهة.
 - **شجرة الأجهزة (FDT):** تُبنى برمجيًا دون أدوات خارجية.
 
+- **المترجم الفوري (JIT):** ترجمة A64 إلى A64 بكتل أساسية مع ربط مباشر ومسار سريع للذاكرة، ويعمل تلقائيًا على مضيف ARM64. التفاصيل في [docs/JIT.md](docs/JIT.md).
+
 السرعة الحالية للمفسّر: نحو 90 إلى 130 مليون تعليمة في الثانية على معالج x86 حديث، ويصل الإقلاع إلى سطر الأوامر خلال ست ثوانٍ تقريبًا.
 
 ## البناء
@@ -31,7 +33,10 @@
 ```sh
 CC=cc ./build.sh          # أو: CC="zig cc" ./build.sh
 ./tests/boot_test.sh      # اختبار الإقلاع الكامل
-cc -O1 -o unit tests/unit_test.c core/simd.c core/devices.c core/fdt.c -lm && ./unit
+cc -O1 -o unit tests/unit_test.c core/simd.c core/devices.c core/fdt.c core/jit.c -lm && ./unit
+# على مضيف x86 يمكن تجربة JIT عبر qemu-aarch64:
+#   CC="zig cc -target aarch64-linux-musl -static" ./build.sh
+#   EMU_WRAP=qemu-aarch64 ./tests/boot_test.sh
 ```
 
 <div dir="rtl">
@@ -53,7 +58,8 @@ cc -O1 -o unit tests/unit_test.c core/simd.c core/devices.c core/fdt.c -lm && ./
 | `-d` | صورة قرص تُعرض كجهاز virtio-blk |
 | `-m` | حجم الذاكرة بالميغابايت |
 | `-a` | معاملات الإقلاع |
-| `--feed` | نص يُكتب آليًا في المنفذ التسلسلي، ويُستخدم في الاختبارات |
+| `--feed` | نص يُكتب آليًا في المنفذ التسلسلي، ويُستخدم في الاختبارات (`\002` ينتظر موجه الصدفة) |
+| `--no-jit` | تعطيل المترجم الفوري والعمل بالمفسّر وحده |
 | `-v` | رسائل تشخيصية، وتكرارها يزيد التفصيل |
 
 ## هيكل المستودع
@@ -62,10 +68,12 @@ cc -O1 -o unit tests/unit_test.c core/simd.c core/devices.c core/fdt.c -lm && ./
 - `core/simd.c`: النقطة العائمة وAdvanced SIMD.
 - `core/devices.c`: GICv3 والمؤقت وPL011 وvirtio-blk.
 - `core/fdt.c`: بناء شجرة الأجهزة.
+- `core/jit.c`: المترجم الفوري من A64 إلى A64.
 - `core/main.c`: واجهة سطر الأوامر.
 - `tools/mkinitramfs.py`: بناء initramfs دون أداة cpio.
 - `tests/`: اختبارات الوحدة واختبار الإقلاع.
 - `docs/ROADMAP.md`: خطة المراحل التالية.
+- `docs/JIT.md`: تصميم المترجم الفوري ووضع JIT على iOS والقياسات.
 - `docs/ci-workflow.yml`: ملف التكامل المستمر، ويُنقل يدويًا إلى `.github/workflows/`.
 
 ## المراحل التالية
