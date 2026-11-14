@@ -122,20 +122,36 @@ if head -c 600 disk.img | grep -aq "WRITTEN-BY-GUEST"; then echo "نجح: الك
 grep -E "توقف|JIT|gpu" emu.log
 
 # ===== المرحلة الرابعة: مسار إقلاع أندرويد بنواة GKI الرسمية من Google =====
-# تُنزَّل صورة boot.img موقّعة (android14-6.1، النواة مضغوطة بـgzip)، وتُبنى vendor_boot.img
-# تحمل القرص الأولي وbootconfig، ثم يُقلع المحاكي الصورتين مباشرة. عطّلها بـGKI=0.
+# تُنزَّل صورة boot.img موقّعة (android14-6.1، النواة مضغوطة بـgzip) ووحدات virtio من البناء نفسه
+# (16875195، الهدف kernel_virt_aarch64)، وتُبنى vendor_boot.img تحمل القرص الأولي والوحدات وbootconfig.
+# عطّلها بـGKI=0.
 GKI_ZIP=gki-certified-boot-android14-6.1-2026-09_r8-gz.zip
+GKI_MODS_URL=https://ci.android.com/builds/submitted/16875195/kernel_virt_aarch64/latest/raw
+GKI_MODS="virtio_mmio virtio_dma_buf virtio-gpu virtio_blk failover net_failover virtio_net virtio_input virtio_snd"
+# init_boot.img (القرص الأولي العام وفيه init المرحلة الأولى) من بناء أندرويد 16 الرسمي لـCuttlefish arm64
+CF_IMG_URL=https://ci.android.com/builds/submitted/16644040/aosp_cf_arm64_only_phone-userdebug/latest/raw/aosp_cf_arm64_only_phone-img-16644040.zip
 if [ "${GKI:-1}" = 1 ]; then
-  mkdir -p gki
+  mkdir -p gki/ko
   [ -f gki/boot-6.1-gz.img ] || { curl -sf -o gki/g.zip "https://dl.google.com/android/gki/$GKI_ZIP" && (cd gki && unzip -o -q g.zip && rm -f g.zip); }
+  MODARGS=""; VMODARGS=""
+  for m in $GKI_MODS; do
+    [ -s gki/ko/$m.ko ] || curl -sfL -o gki/ko/$m.ko "$GKI_MODS_URL/$m.ko" || rm -f gki/ko/$m.ko
+    [ -s gki/ko/$m.ko ] && { MODARGS="$MODARGS --module gki/ko/$m.ko"; VMODARGS="$VMODARGS --module ko/$m.ko"; }
+  done
+  # عميل DRM صغير لاختبار العرض؛ يُبنى إن وُجد مترجم aarch64 (zig افتراضيًا)
+  DRM_CC=${DRM_CC:-"zig cc -target aarch64-linux-musl -static -O2"}
+  DRMFILE=""
+  [ -f gki/drmtest ] || $DRM_CC -o gki/drmtest "$ROOT/tools/drmtest.c" 2>/dev/null || true
+  [ -f gki/drmtest ] && DRMFILE="--file gki/drmtest:usr/bin/drmtest"
   if [ -f gki/boot-6.1-gz.img ]; then
-    python3 "$ROOT/tools/mkinitramfs.py" bb/bin/busybox.static gki/initrd.gz
+    python3 "$ROOT/tools/mkinitramfs.py" bb/bin/busybox.static gki/initrd.gz $MODARGS $DRMFILE
     python3 "$ROOT/tools/mkbootimg.py" --vendor-ramdisk gki/initrd.gz \
       --vendor-cmdline "console=ttyAMA0 earlycon=pl011,0x09000000 rdinit=/init" \
       --bootconfig androidboot.hardware=gtv --bootconfig androidboot.slot_suffix=_a --vendor-out gki/vendor_boot.img
+    rm -f gki/screen.png
     $EMU_WRAP "${EMU:-$ROOT/gtv-emu}" --smp 2 $EMU_ARGS --bootimg gki/boot-6.1-gz.img --vendor-boot gki/vendor_boot.img \
-      --androidboot serialno=GTV0001 -a "" --max-insns 40000000000 \
-      --feed "$(printf '\002uname -r; cat /proc/bootconfig; grep -c binder /proc/filesystems; echo GKI-SHELL-$((6*7)); poweroff -f\r')" \
+      --androidboot serialno=GTV0001 -a "" -d disk.img --max-insns 60000000000 --screenshot gki/screen.png \
+      --feed "$(printf '\002uname -r; cat /proc/bootconfig; grep -c binder /proc/filesystems; ip link set eth0 up; udhcpc -i eth0 -n -q -s /etc/udhcpc.sh; cat /proc/asound/cards; ls /dev/input /dev/snd /dev/dri; [ -x /usr/bin/drmtest ] && /usr/bin/drmtest /dev/dri/card0; echo GKI-SHELL-$((6*7)); poweroff -f\r')" \
       > gki/boot.log 2> gki/emu.log || true
     check "boot.img إصدار 4 مع vendor_boot" gki/emu.log "أندرويد: قراءة boot.img وvendor_boot.img (الإصدار 4) وفك ضغط النواة"
     check "Linux version 6.1.*android14" gki/boot.log "أندرويد: إقلاع نواة GKI الرسمية"
@@ -143,8 +159,62 @@ if [ "${GKI:-1}" = 1 ]; then
     check 'androidboot.hardware = "gtv"' gki/boot.log "أندرويد: خصائص vendor_boot في /proc/bootconfig"
     check 'androidboot.serialno = "GTV0001"' gki/boot.log "أندرويد: خصائص --androidboot في /proc/bootconfig"
     check "smp: Brought up 1 node, 2 CPUs" gki/boot.log "أندرويد: معالجان مع نواة GKI"
+    if [ -n "$MODARGS" ]; then
+      check "virtio-blk read: GTV-DISK-HELLO" gki/boot.log "GKI: قرص virtio عبر وحدة virtio_blk.ko"
+      check "lease of 10.0.2.15 obtained" gki/boot.log "GKI: شبكة virtio_net.ko وDHCP عبر NAT"
+      check "virtio-snd - VirtIO SoundCard" gki/boot.log "GKI: بطاقة صوت virtio_snd.ko"
+      check "pcmC0D0p" gki/boot.log "GKI: عقدة ALSA للتشغيل"
+      check "event1" gki/boot.log "GKI: جهازا الإدخال (لوحة المفاتيح واللمس) عبر virtio_input.ko"
+      check "renderD128" gki/boot.log "GKI: بطاقة DRM من virtio-gpu.ko"
+      if [ -n "$DRMFILE" ]; then
+        check "drm: DISPLAY-OK" gki/boot.log "GKI: عرض إطار عبر DRM/KMS (SETCRTC)"
+        check "لقطة شاشة 1280x720" gki/emu.log "GKI: لقطة شاشة من إطار DRM"
+      fi
+    else
+      echo "تخطٍّ: تعذّر تنزيل وحدات GKI"
+    fi
     check "^GKI-SHELL-42" gki/boot.log "أندرويد: صدفة تعمل فوق نواة GKI"
     grep -E "boot.img|توقف" gki/emu.log
+
+    # ===== المرحلة الخامسة: init أندرويد الحقيقي (المرحلة الأولى) =====
+    # يحمّل init الوحدات من vendor ramdisk، ويقرأ fstab.gtv، ويركّب /system من قرص virtio
+    # (صورة ext2 صغيرة نبنيها)، ثم ينقل الجذر إليها وينفّذ /system/bin/init selinux_setup.
+    [ -f gki/init_boot.img ] || python3 "$ROOT/tools/fetchzipmember.py" "$CF_IMG_URL" init_boot.img gki/init_boot.img || true
+    if [ -f gki/init_boot.img ] && [ -n "$VMODARGS" ]; then
+      cat > gki/init2.sh <<'SH'
+#!/system/bin/busybox sh
+# يستدعيه init أندرويد بعد المرحلة الأولى. الجذر صورة النظام للقراءة فقط، لذا تُثبَّت الأوامر في tmpfs.
+B=/system/bin/busybox
+$B mount -t tmpfs tmpfs /bin && $B --install -s /bin
+export PATH=/bin:/system/bin
+echo "ANDROID-HANDOFF: pid=$$ args=[$*] root=$(grep ' / / ' /proc/self/mountinfo | cut -d' ' -f9-10)"
+[ -c /dev/console ] || mknod /dev/console c 5 1
+exec setsid -c sh </dev/console >/dev/console 2>&1
+SH
+      python3 "$ROOT/tools/mkext2.py" gki/system.img --dir dev --dir proc --dir sys --dir tmp --dir bin --dir mnt \
+        --dir metadata --dir debug_ramdisk --dir second_stage_resources \
+        --file bb/bin/busybox.static:system/bin/busybox:755 --file gki/init2.sh:system/bin/init:755 --symlink busybox:system/bin/sh
+      (cd gki && python3 "$ROOT/tools/mkvendorramdisk.py" vendor_ramdisk_fs.gz --hardware gtv \
+        --fstab "/dev/block/vda /system ext4 ro wait,first_stage_mount" $VMODARGS)
+      python3 "$ROOT/tools/mkbootimg.py" --vendor-ramdisk gki/vendor_ramdisk_fs.gz \
+        --vendor-cmdline "console=ttyAMA0 earlycon=pl011,0x09000000 printk.devkmsg=on" \
+        --bootconfig androidboot.hardware=gtv --bootconfig androidboot.boot_devices=a000000.virtio_mmio \
+        --vendor-out gki/vendor_boot_fs.img
+      $EMU_WRAP "${EMU:-$ROOT/gtv-emu}" --smp 2 $EMU_ARGS --bootimg gki/boot-6.1-gz.img --vendor-boot gki/vendor_boot_fs.img \
+        --init-boot gki/init_boot.img -d gki/system.img --max-insns 60000000000 \
+        --feed "$(printf '\002echo SHELL-AFTER-HANDOFF-$((6*7)); ls /dev/block; poweroff -f\r')" \
+        > gki/init.log 2> gki/init-emu.log || true
+      check "init_boot.img: قرص أولي عام" gki/init-emu.log "أندرويد: تحميل init_boot.img"
+      check "init: init first stage started" gki/init.log "أندرويد: تشغيل init الحقيقي (المرحلة الأولى)"
+      check "init: Loaded [0-9]* kernel modules" gki/init.log "أندرويد: init يحمّل وحدات vendor ramdisk"
+      check "__mount(source=/dev/block/vda,target=/system,type=ext4)=0" gki/init.log "أندرويد: تركيب /system من fstab.gtv"
+      check "init: Switching root to '/system'" gki/init.log "أندرويد: نقل الجذر إلى /system"
+      check "ANDROID-HANDOFF: pid=1 args=\[selinux_setup\]" gki/init.log "أندرويد: تسليم المرحلة الثانية (selinux_setup)"
+      check "^SHELL-AFTER-HANDOFF-42" gki/init.log "أندرويد: صدفة بعد تسليم init"
+      grep -E "توقف" gki/init-emu.log
+    else
+      echo "تخطٍّ: تعذّر تنزيل init_boot.img"
+    fi
   else
     echo "تخطٍّ: تعذّر تنزيل نواة GKI"
   fi
