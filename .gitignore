@@ -1,3 +1,4 @@
 gtv-emu
 unit
 *.o
+tools/__pycache__/
