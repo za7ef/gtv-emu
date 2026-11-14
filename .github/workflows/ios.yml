@@ -1,0 +1,47 @@
+# بناء تطبيق iOS غير موقّع (IPA) على مشغّل macOS.
+# يُوقَّع الملف لاحقًا على الجهاز بأداة التثبيت الجانبي (SideStore أو Feather أو غيرهما).
+name: تطبيق iOS
+on:
+  push:
+    paths: ["core/**", "ios/**", ".github/workflows/ios.yml"]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "وسم إصدار لإرفاق ملف IPA به (اختياري)"
+        required: false
+        default: ""
+permissions:
+  contents: write
+jobs:
+  ipa:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: الأدوات
+        run: brew install xcodegen ldid
+      - name: توليد مشروع Xcode
+        working-directory: ios
+        run: xcodegen generate
+      - name: البناء
+        working-directory: ios
+        run: |
+          xcodebuild -project GTVEmu.xcodeproj -target GTVEmu -configuration Release -sdk iphoneos \
+            ARCHS=arm64 SYMROOT="$PWD/build" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build | tail -40
+          test -d build/Release-iphoneos/GTVEmu.app
+      - name: تضمين الصلاحيات وتجميع IPA
+        working-directory: ios
+        run: |
+          # توقيع وهمي يضمّن get-task-allow وصلاحيات الذاكرة؛ أدوات التثبيت تعيد التوقيع بشهادة المستخدم
+          ldid -SGTVEmu/GTVEmu.entitlements build/Release-iphoneos/GTVEmu.app || echo "تخطٍّ: ldid"
+          rm -rf Payload && mkdir Payload && cp -R build/Release-iphoneos/GTVEmu.app Payload/
+          zip -qry GTVEmu-unsigned.ipa Payload
+          ls -la GTVEmu-unsigned.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GTVEmu-unsigned-ipa
+          path: ios/GTVEmu-unsigned.ipa
+      - name: إرفاق الملف بالإصدار
+        if: ${{ github.event.inputs.release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.inputs.release_tag }}" ios/GTVEmu-unsigned.ipa --clobber
