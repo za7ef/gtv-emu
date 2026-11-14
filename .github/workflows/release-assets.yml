@@ -1,0 +1,30 @@
+# بناء ملفات الصور التي ينزّلها تطبيق iOS ونشرها في إصدار مع manifest.json.
+name: صور تطبيق iOS
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "وسم الإصدار"
+        required: true
+        default: "images-v1"
+      android:
+        description: "تضمين ملف تعريف أندرويد (يستغرق وقتًا أطول)"
+        type: boolean
+        default: false
+permissions:
+  contents: write
+jobs:
+  assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: بناء الصور
+        run: WORK=/tmp/assets-work ./tools/mkios-assets.sh out ${{ github.event.inputs.android == 'true' && '--android' || '' }}
+      - name: النشر
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "صور تطبيق iOS ($TAG)" \
+            --notes "ملفات الإقلاع التي ينزّلها تطبيق GTV Emu على iOS، مع manifest.json يصفها."
+          gh release upload "$TAG" out/* --clobber
