@@ -22,7 +22,7 @@ int main(void) {
     c.nzcv = 0x60000000;
     EXPECT(cond_holds(&c, 0) && !cond_holds(&c, 1) && cond_holds(&c, 2) && cond_holds(&c, 9), "تقييم الشروط EQ/NE/CS/LS");
     uint8_t dtb[8192];
-    size_t n = fdt_build(dtb, sizeof dtb, 512ULL << 20, "console=ttyAMA0", 0, 0, 1);
+    size_t n = fdt_build(dtb, sizeof dtb, 512ULL << 20, "console=ttyAMA0", 0, 0, 1, 2);
     EXPECT(n > 64 && dtb[0] == 0xd0 && dtb[1] == 0x0d && dtb[2] == 0xfe && dtb[3] == 0xed, "بناء شجرة أجهزة صالحة");
     printf(fails ? "\nبعض الاختبارات فشلت\n" : "\nكل الاختبارات نجحت\n");
     return fails != 0;
