@@ -34,6 +34,7 @@ typedef struct {
     uint8_t *host;     /* مؤشر صفحة الذاكرة على المضيف، أو NULL لأجهزة MMIO */
     uint64_t pa;       /* العنوان الفيزيائي للصفحة */
     uint8_t  perm;     /* بتات الصلاحيات */
+    uint8_t  code;     /* الصفحة تحتوي شيفرة مترجمة: الكتابة تمر بالمسار البطيء */
 } TLBEntry;
 
 #define TLB_SIZE 4096
@@ -68,6 +69,13 @@ typedef struct CPU {
     uint64_t excl_addr;
     int excl_valid;
 
+    /* حالة المترجم الفوري */
+    int64_t jit_budget;       /* التعليمات المسموح بتنفيذها قبل العودة إلى الحلقة */
+    int64_t jit_given;
+    uint64_t jit_last_slot;   /* آخر قفزة خروج قابلة للربط */
+    int jit_exit_req;
+    int jit_in;
+
     /* ذاكرة الترجمة المؤقتة */
     TLBEntry tlb[TLB_SIZE];
     uint64_t fetch_tag;
@@ -95,6 +103,7 @@ typedef struct Machine {
     int trace;
     int verbose;
     int quiet_unimpl;
+    void *jit;               /* NULL عند العمل بالمفسّر وحده */
 } Machine;
 
 /* cpu.c */
@@ -139,6 +148,14 @@ void virtio_write(Machine *m, int idx, uint64_t off, int size, uint64_t v);
 
 void timer_update(Machine *m);
 uint64_t timer_next_deadline(Machine *m);
+
+/* jit.c */
+void *jit_create(Machine *m);
+int  jit_page_is_code(Machine *m, uint64_t pa);
+void jit_code_write(CPU *c, uint64_t pa);
+void jit_dma_write(Machine *m, uint64_t pa, uint64_t len);
+void jit_exec(CPU *c);
+void jit_stats(Machine *m);
 
 /* fdt.c */
 size_t fdt_build(uint8_t *buf, size_t cap, uint64_t ram_size, const char *bootargs,

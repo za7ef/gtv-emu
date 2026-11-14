@@ -270,6 +270,8 @@ typedef struct {
     int stdin_ok;
     const char *feed;
     uint64_t feed_ns;
+    char last_tx;
+    int prompt_seen;      /* شاهدنا "# " في المخرجات: الصدفة جاهزة للإدخال */
 } UART;
 
 void *uart_create(Machine *m) {
@@ -300,7 +302,11 @@ void uart_feed(Machine *m, const char *s) {
 int uart_has_input(Machine *m) {
     UART *u = m->uart;
     struct pollfd p = { 0, POLLIN, 0 };
-    if (u->feed && *u->feed) return 1;
+    if (u->feed && *u->feed) {
+        int blocked = (*u->feed == '\x02' && !u->prompt_seen) || host_ns() < u->feed_ns;
+        if (!blocked) return 1;
+        return 0;
+    }
     return poll(&p, 1, 0) > 0;
 }
 
@@ -313,6 +319,10 @@ void uart_poll(Machine *m) {
         /* سطر واحد كل فترة لمحاكاة الكتابة */
         while (*u->feed && rx_count(u) < 200 && now >= u->feed_ns) {
             char ch = *u->feed++;
+            if (ch == '\x02') { /* انتظر ظهور موجه الصدفة قبل المتابعة */
+                if (!u->prompt_seen) { u->feed--; break; }
+                u->prompt_seen = 0; u->feed_ns = now + 200000000ULL; break;
+            }
             if (ch == '\x01') { u->feed_ns = now + 1500000000ULL; continue; } /* انتظار */
             u->rx[u->rx_head] = ch; u->rx_head = (u->rx_head + 1) & 255; changed = 1;
             if (ch == '\n' || ch == '\r') { u->feed_ns = now + 300000000ULL; break; }
@@ -370,7 +380,9 @@ void uart_write(Machine *m, uint64_t off, int size, uint64_t v) {
     UART *u = m->uart;
     (void)size;
     switch (off) {
-    case 0x00: { char ch = v & 0xFF; if (write(1, &ch, 1) < 0) {} uart_irq(m); return; }
+    case 0x00: { char ch = v & 0xFF; if (write(1, &ch, 1) < 0) {}
+        UART *uu = m->uart; if (uu->last_tx == '#' && ch == ' ') uu->prompt_seen = 1; uu->last_tx = ch;
+        uart_irq(m); return; }
     case 0x24: u->ibrd = v; return;
     case 0x28: u->fbrd = v; return;
     case 0x2C: u->lcr = v; return;
@@ -449,6 +461,7 @@ static void vblk_process(Machine *m, VBlk *b) {
                 uint8_t *p = gpa(m, addrs[k], lens[k]);
                 if (!p) { st = 1; break; }
                 if (type == 0) {
+                    jit_dma_write(m, addrs[k], lens[k]);
                     ssize_t r = pread(b->fd, p, lens[k], pos);
                     if (r < 0) st = 1;
                     else if ((uint32_t)r < lens[k]) memset(p + r, 0, lens[k] - r);
@@ -458,6 +471,7 @@ static void vblk_process(Machine *m, VBlk *b) {
                 } else if (type == 8) {
                     const char *id = "gtv-emu-disk";
                     uint32_t l = lens[k] < 20 ? lens[k] : 20;
+                    jit_dma_write(m, addrs[k], l);
                     memset(p, 0, l);
                     memcpy(p, id, strlen(id) < l ? strlen(id) : l);
                     written += l;

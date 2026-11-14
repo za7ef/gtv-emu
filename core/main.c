@@ -25,7 +25,7 @@ static long load_file(const char *path, uint8_t *dst, uint64_t cap) {
 static void usage(void) {
     fprintf(stderr,
         "الاستخدام: gtv-emu -k Image [-i initrd] [-d disk.img] [-m ميغابايت] [-a \"bootargs\"]\n"
-        "           [--feed \"أوامر\"] [--max-insns N] [-v]\n");
+        "           [--feed \"أوامر\"] [--max-insns N] [--no-jit] [-v]\n");
     exit(1);
 }
 
@@ -33,7 +33,7 @@ int main(int argc, char **argv) {
     const char *kernel = NULL, *initrd = NULL, *disk = NULL, *feed = NULL;
     const char *bootargs = "console=ttyAMA0 earlycon=pl011,0x09000000 nokaslr rdinit=/init";
     uint64_t ram_mb = 512, max_insns = 0;
-    int verbose = 0;
+    int verbose = 0, use_jit = 1;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "-k") && i + 1 < argc) kernel = argv[++i];
         else if (!strcmp(argv[i], "-i") && i + 1 < argc) initrd = argv[++i];
@@ -43,6 +43,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--feed") && i + 1 < argc) feed = argv[++i];
         else if (!strcmp(argv[i], "--max-insns") && i + 1 < argc) max_insns = strtoull(argv[++i], 0, 0);
         else if (!strcmp(argv[i], "-v")) verbose++;
+        else if (!strcmp(argv[i], "--no-jit")) use_jit = 0;
+        else if (!strcmp(argv[i], "--jit")) use_jit = 1;
         else usage();
     }
     if (!kernel) usage();
@@ -78,6 +80,7 @@ int main(int argc, char **argv) {
     size_t dsz = fdt_build(m->ram, 0x100000, m->ram_size, bootargs, initrd_start, initrd_end, VIRTIO_COUNT);
     if (!dsz) { fprintf(stderr, "فشل بناء شجرة الأجهزة\n"); return 1; }
 
+    if (use_jit && !jit_create(m)) fprintf(stderr, "[gtv] المترجم الفوري غير متاح على هذا المضيف؛ يعمل المفسّر وحده\n");
     cpu_reset(&m->cpu, m);
     m->cpu.pc = kaddr;
     m->cpu.x[0] = dtb_addr;
@@ -102,5 +105,6 @@ int main(int argc, char **argv) {
     fprintf(stderr, "\n[gtv] توقف بعد %llu تعليمة خلال %.1f ثانية (%.1f مليون تعليمة/ثانية) pc=%016llx\n",
             (unsigned long long)m->cpu.icount, secs, m->cpu.icount / secs / 1e6,
             (unsigned long long)m->cpu.pc);
+    jit_stats(m);
     return m->cpu.exit_code;
 }

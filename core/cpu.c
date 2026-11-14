@@ -196,6 +196,7 @@ static TLBEntry *translate(CPU *c, uint64_t va, int acc) {
     e->tag = (vpn << 1) | 1;
     e->perm = w.perm;
     e->pa = w.pa & ~0xFFFULL;
+    e->code = c->m->jit ? (uint8_t)jit_page_is_code(c->m, e->pa) : 0;
     if (e->pa >= RAM_BASE && e->pa < RAM_BASE + c->m->ram_size)
         e->host = c->m->ram + (e->pa - RAM_BASE);
     else
@@ -261,6 +262,7 @@ void mem_write(CPU *c, uint64_t va, int size, uint64_t val) {
     TLBEntry *e = translate(c, va, ACC_W);
     if (e->host) {
         uint8_t *p = e->host + off;
+        if (e->code) jit_code_write(c, e->pa);
         switch (size) {
         case 1: *p = val; return;
         case 2: { uint16_t v = val; memcpy(p, &v, 2); return; }
@@ -1154,11 +1156,8 @@ void cpu_reset(CPU *c, Machine *m) {
     c->cpacr = 0;
 }
 
-static inline void step(CPU *c) {
-    c->cur_pc = c->pc;
-    uint32_t insn = fetch(c);
-    c->cur_insn = insn;
-    c->pc += 4;
+/* ينفذ تعليمة واحدة (c->pc مضبوط على العنوان التالي مسبقًا) */
+void cpu_exec_insn(CPU *c, uint32_t insn) {
     uint32_t op = BITS(insn, 28, 25);
     switch (op) {
     case 8: case 9: exec_dp_imm(c, insn); break;
@@ -1170,16 +1169,45 @@ static inline void step(CPU *c) {
     }
 }
 
+static inline void step(CPU *c) {
+    c->cur_pc = c->pc;
+    uint32_t insn = fetch(c);
+    c->cur_insn = insn;
+    c->pc += 4;
+    cpu_exec_insn(c, insn);
+}
+
+/* عنوان صفحة الشيفرة على المضيف للمترجم الفوري (قد يرفع استثناء تعليمة) */
+const uint8_t *cpu_code_ptr(CPU *c, uint64_t pc, uint64_t *pa) {
+    if (pc & 3) sync_exception(c, (0x22ULL << 26) | (1ULL << 25), pc, 1);
+    TLBEntry *e = translate(c, pc, ACC_X);
+    if (!e->host) {
+        fprintf(stderr, "[gtv] تنفيذ من خارج الذاكرة pc=%llx\n", (unsigned long long)pc);
+        exit(3);
+    }
+    *pa = e->pa | (pc & 0xFFF);
+    return e->host;
+}
+
 int cpu_run(CPU *c, uint64_t max_insns) {
     Machine *m = c->m;
     uint64_t end = max_insns ? c->icount + max_insns : ~0ULL;
+    static uint64_t last_tick;
+    last_tick = ~0ULL;
     setjmp(c->jb);
+    if (c->jit_in) { /* عودة من استثناء أثناء تنفيذ شيفرة مترجمة */
+        c->icount += (uint64_t)(c->jit_given - c->jit_budget);
+        c->jit_in = 0;
+    }
     while (!c->stop && c->icount < end) {
-        /* فحص الأجهزة دوريًا */
-        if ((c->icount & 0x3FF) == 0) {
+        /* فحص الأجهزة دوريًا (كل 1024 تعليمة) */
+        uint64_t tick = c->icount >> 10;
+        if (m->jit ? tick != last_tick : (c->icount & 0x3FF) == 0) {
+            int poll = m->jit ? (tick & 63) == 0 || (tick >> 6) != (last_tick >> 6) : (c->icount & 0xFFFF) == 0;
+            last_tick = tick;
             timer_update(m);
-            if ((c->icount & 0xFFFF) == 0) uart_poll(m);
-            if (m->verbose >= 3 && (c->icount % 10000000) < 1024) fprintf(stderr, "[gtv] %lluM pc=%016llx EL%d\n", (unsigned long long)(c->icount / 1000000), (unsigned long long)c->pc, c->el);
+            if (poll) uart_poll(m);
+            if (m->verbose >= 3 && (tick % 9766) == 0) fprintf(stderr, "[gtv] %lluM pc=%016llx EL%d\n", (unsigned long long)(c->icount / 1000000), (unsigned long long)c->pc, c->el);
         }
         if (m->irq_line && !(c->daif & (1 << 7))) {
             c->halted = 0;
@@ -1201,6 +1229,17 @@ int cpu_run(CPU *c, uint64_t max_insns) {
             }
             if (m->irq_line) c->halted = 0;
             c->icount++;
+            continue;
+        }
+        if (m->jit && !m->trace) {
+            int64_t b = 1024 - (int64_t)(c->icount & 1023);
+            if (end - c->icount < (uint64_t)b) b = (int64_t)(end - c->icount);
+            c->jit_budget = b;
+            c->jit_given = b;
+            c->jit_in = 1;
+            jit_exec(c);
+            c->jit_in = 0;
+            c->icount += (uint64_t)(b - c->jit_budget);
             continue;
         }
         if (m->trace) fprintf(stderr, "%016llx EL%d\n", (unsigned long long)c->pc, c->el);
