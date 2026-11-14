@@ -5,7 +5,7 @@
 محاكي مبنيّ من الصفر لمعمارية AArch64 (ARMv8-A)، هدفه تشغيل نظام Android TV / Google TV على أجهزة آيفون.
 النواة مكتوبة بلغة C قابلة للنقل، فتُختبر على لينكس ثم تُدمج لاحقًا في تطبيق iOS بواجهة SwiftUI وعرض عبر Metal.
 
-## الحالة الحالية: المراحل الأولى والثانية والثالثة تعمل
+## الحالة الحالية: المراحل من الأولى إلى الرابعة تعمل، وأندرويد الكامل لم يُقلع بعد
 
 يُقلع المحاكي نواة لينكس حقيقية (Alpine linux-virt 6.12 لمعمارية arm64) مع initramfs حتى سطر أوامر busybox تفاعلي،
 ويقرأ ويكتب على قرص virtio، ويُطفئ النظام عبر PSCI.
@@ -20,7 +20,9 @@
 - **المؤقت العام:** المؤقت الافتراضي والفيزيائي مع WFI موفّر للطاقة.
 - **PL011:** منفذ تسلسلي مع مقاطعات للإرسال والاستقبال.
 - **virtio-mmio:** ناقل عام بالإصدار الثاني من الواجهة، عليه قرص (virtio-blk) وشبكة (virtio-net) ورسوميات ثنائية الأبعاد (virtio-gpu) ولوحة مفاتيح (virtio-input) وصوت (virtio-snd)، مع شبكة NAT داخلية.
-- **تعدد المعالجات:** حتى أربعة معالجات افتراضية عبر PSCI. التفاصيل في [docs/DEVICES.md](docs/DEVICES.md).
+- **تعدد المعالجات:** حتى أربعة معالجات افتراضية عبر PSCI.
+- **الريموت واللمس:** مفاتيح ريموت Android TV وشاشة لمس متعددة اللمسات.
+- **صور أندرويد:** إقلاع boot.img وvendor_boot.img مباشرة مع bootconfig، ومُختبر بنواة GKI الرسمية من Google. انظر [docs/ANDROID.md](docs/ANDROID.md). التفاصيل في [docs/DEVICES.md](docs/DEVICES.md).
 - **شجرة الأجهزة (FDT):** تُبنى برمجيًا دون أدوات خارجية.
 
 - **المترجم الفوري (JIT):** ترجمة A64 إلى A64 بكتل أساسية مع ربط مباشر ومسار سريع للذاكرة، ويعمل تلقائيًا على مضيف ARM64. التفاصيل في [docs/JIT.md](docs/JIT.md).
@@ -34,7 +36,7 @@
 ```sh
 CC=cc ./build.sh          # أو: CC="zig cc" ./build.sh
 ./tests/boot_test.sh      # اختبار الإقلاع الكامل
-cc -O1 -o unit tests/unit_test.c core/simd.c core/devices.c core/virtio.c core/netstack.c core/fdt.c core/jit.c -lm && ./unit
+cc -O1 -o unit tests/unit_test.c core/simd.c core/devices.c core/virtio.c core/netstack.c core/bootimg.c core/fdt.c core/jit.c -lm && ./unit
 # على مضيف x86 يمكن تجربة JIT عبر qemu-aarch64:
 #   CC="zig cc -target aarch64-linux-musl -static" ./build.sh
 #   EMU_WRAP=qemu-aarch64 ./tests/boot_test.sh
@@ -63,6 +65,9 @@ cc -O1 -o unit tests/unit_test.c core/simd.c core/devices.c core/virtio.c core/n
 | `--keys` | نص يُكتب عبر لوحة مفاتيح virtio بعد الأمر `\003` في `--feed` |
 | `--screenshot` | حفظ الإطار المعروض من virtio-gpu في ملف PNG عند التوقف |
 | `--audio` | حفظ صوت virtio-snd في ملف WAV |
+| `--bootimg` / `--vendor-boot` | إقلاع صور أندرويد |
+| `--androidboot` | إضافة خاصية `androidboot.*` إلى bootconfig |
+| `--events` | سيناريو ريموت ولمس آلي |
 | `--smp` | عدد المعالجات (من 1 إلى 4) |
 | `--no-jit` | تعطيل المترجم الفوري والعمل بالمفسّر وحده |
 | `-v` | رسائل تشخيصية، وتكرارها يزيد التفصيل |
@@ -74,6 +79,8 @@ cc -O1 -o unit tests/unit_test.c core/simd.c core/devices.c core/virtio.c core/n
 - `core/devices.c`: GICv3 والمؤقت وPL011.
 - `core/virtio.c`: ناقل virtio-mmio وأجهزة القرص والشبكة والرسوميات والإدخال والصوت.
 - `core/netstack.c`: شبكة المستخدم (NAT) وDHCP وDNS.
+- `core/bootimg.c`: قراءة صور أندرويد وفك ضغط gzip وbootconfig.
+- `tools/mkbootimg.py`: إنشاء صور boot وvendor_boot للاختبار.
 - `core/fdt.c`: بناء شجرة الأجهزة.
 - `core/jit.c`: المترجم الفوري من A64 إلى A64.
 - `core/main.c`: واجهة سطر الأوامر.
