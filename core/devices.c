@@ -1,4 +1,4 @@
-/* gtv-emu — الأجهزة: GICv3 والمؤقت العام وPL011 وvirtio-mmio للأقراص. */
+/* gtv-emu — الأجهزة: GICv3 والمؤقت العام وPL011 (أجهزة virtio في virtio.c). */
 #include "emu.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -305,13 +305,14 @@ int uart_has_input(Machine *m) {
     if (u->feed && *u->feed) {
         int blocked = (*u->feed == '\x02' && !u->prompt_seen) || host_ns() < u->feed_ns;
         if (!blocked) return 1;
-        return 0;
+        return virtio_has_work(m);
     }
     return poll(&p, 1, 0) > 0;
 }
 
 void uart_poll(Machine *m) {
     UART *u = m->uart;
+    virtio_poll(m);
     int changed = 0;
     if (u->feed && *u->feed) {
         uint64_t now = host_ns();
@@ -323,6 +324,7 @@ void uart_poll(Machine *m) {
                 if (!u->prompt_seen) { u->feed--; break; }
                 u->prompt_seen = 0; u->feed_ns = now + 200000000ULL; break;
             }
+            if (ch == '\x03') { input_arm_keys(m); continue; } /* ابدأ الكتابة عبر لوحة مفاتيح virtio */
             if (ch == '\x01') { u->feed_ns = now + 1500000000ULL; continue; } /* انتظار */
             u->rx[u->rx_head] = ch; u->rx_head = (u->rx_head + 1) & 255; changed = 1;
             if (ch == '\n' || ch == '\r') { u->feed_ns = now + 300000000ULL; break; }
@@ -393,177 +395,3 @@ void uart_write(Machine *m, uint64_t off, int size, uint64_t v) {
     }
 }
 
-/* ======================= virtio-mmio (قرص) ======================= */
-typedef struct {
-    int idx;
-    int fd;
-    uint64_t capacity; /* بالقطاعات */
-    uint32_t status, dev_feat_sel, drv_feat_sel, queue_sel, int_status;
-    uint64_t drv_features;
-    struct {
-        uint32_t num, ready;
-        uint64_t desc, avail, used;
-        uint16_t last_avail;
-    } q;
-} VBlk;
-
-void *virtio_blk_create(Machine *m, int idx, const char *path) {
-    VBlk *b = calloc(1, sizeof(VBlk));
-    b->idx = idx;
-    b->fd = path ? open(path, O_RDWR) : -1;
-    if (path && b->fd < 0) b->fd = open(path, O_RDONLY);
-    if (b->fd >= 0) {
-        off_t sz = lseek(b->fd, 0, SEEK_END);
-        b->capacity = sz / 512;
-    }
-    (void)m;
-    return b;
-}
-
-static uint8_t *gpa(Machine *m, uint64_t pa, uint64_t len) {
-    if (pa < RAM_BASE || pa + len > RAM_BASE + m->ram_size) return NULL;
-    return m->ram + (pa - RAM_BASE);
-}
-
-static void vblk_process(Machine *m, VBlk *b) {
-    if (!b->q.ready || !b->q.num) return;
-    uint8_t *avail = gpa(m, b->q.avail, 4 + 2 * b->q.num);
-    uint8_t *used = gpa(m, b->q.used, 4 + 8 * b->q.num);
-    uint8_t *desc = gpa(m, b->q.desc, 16 * b->q.num);
-    if (!avail || !used || !desc) return;
-    uint16_t aidx;
-    memcpy(&aidx, avail + 2, 2);
-    int did = 0;
-    while (b->q.last_avail != aidx) {
-        uint16_t head;
-        memcpy(&head, avail + 4 + 2 * (b->q.last_avail % b->q.num), 2);
-        b->q.last_avail++;
-        /* اجمع السلسلة */
-        uint64_t addrs[64]; uint32_t lens[64]; int wr[64]; int n = 0;
-        uint16_t i = head;
-        for (;;) {
-            uint8_t *d = desc + 16 * i;
-            uint64_t a; uint32_t l; uint16_t fl, nx;
-            memcpy(&a, d, 8); memcpy(&l, d + 8, 4); memcpy(&fl, d + 12, 2); memcpy(&nx, d + 14, 2);
-            if (n < 64) { addrs[n] = a; lens[n] = l; wr[n] = fl & 2; n++; }
-            if (!(fl & 1)) break;
-            i = nx;
-        }
-        uint32_t written = 0;
-        uint8_t st = 0;
-        uint8_t *hdr = gpa(m, addrs[0], 16);
-        if (!hdr || n < 2) st = 1;
-        else {
-            uint32_t type; uint64_t sector;
-            memcpy(&type, hdr, 4); memcpy(&sector, hdr + 8, 8);
-            uint64_t pos = sector * 512;
-            for (int k = 1; k < n - 1; k++) {
-                uint8_t *p = gpa(m, addrs[k], lens[k]);
-                if (!p) { st = 1; break; }
-                if (type == 0) {
-                    jit_dma_write(m, addrs[k], lens[k]);
-                    ssize_t r = pread(b->fd, p, lens[k], pos);
-                    if (r < 0) st = 1;
-                    else if ((uint32_t)r < lens[k]) memset(p + r, 0, lens[k] - r);
-                    written += lens[k];
-                } else if (type == 1) {
-                    if (pwrite(b->fd, p, lens[k], pos) < 0) st = 1;
-                } else if (type == 8) {
-                    const char *id = "gtv-emu-disk";
-                    uint32_t l = lens[k] < 20 ? lens[k] : 20;
-                    jit_dma_write(m, addrs[k], l);
-                    memset(p, 0, l);
-                    memcpy(p, id, strlen(id) < l ? strlen(id) : l);
-                    written += l;
-                }
-                pos += lens[k];
-            }
-            if (type == 4) { fsync(b->fd); }
-            else if (type != 0 && type != 1 && type != 8) st = 2;
-        }
-        uint8_t *sp = gpa(m, addrs[n - 1], 1);
-        if (sp) *sp = st;
-        written += 1;
-        uint16_t uidx;
-        memcpy(&uidx, used + 2, 2);
-        uint8_t *ue = used + 4 + 8 * (uidx % b->q.num);
-        uint32_t h32 = head;
-        memcpy(ue, &h32, 4);
-        memcpy(ue + 4, &written, 4);
-        uidx++;
-        memcpy(used + 2, &uidx, 2);
-        did = 1;
-    }
-    if (did) {
-        b->int_status |= 1;
-        gic_set_irq(m, IRQ_VIRTIO + b->idx, 1);
-    }
-}
-
-uint64_t virtio_read(Machine *m, int idx, uint64_t off, int size) {
-    VBlk *b = m->virtio[idx];
-    if (!b || b->fd < 0) {
-        if (off == 0) return 0x74726976;
-        if (off == 4) return 2;
-        return 0; /* DeviceID 0 = لا جهاز */
-    }
-    if (off >= 0x100) {
-        uint8_t cfg[64] = {0};
-        memcpy(cfg, &b->capacity, 8);
-        uint32_t seg_max = 62; memcpy(cfg + 12, &seg_max, 4);
-        uint32_t blk = 512; memcpy(cfg + 20, &blk, 4);
-        uint64_t v = 0;
-        uint64_t o = off - 0x100;
-        if (o + size <= sizeof(cfg)) memcpy(&v, cfg + o, size);
-        return v;
-    }
-    switch (off) {
-    case 0x000: return 0x74726976;
-    case 0x004: return 2;
-    case 0x008: return 2;
-    case 0x00C: return 0x554D4551;
-    case 0x010:
-        if (b->dev_feat_sel == 0) return (1u << 2) | (1u << 6) | (1u << 9); /* SEG_MAX, BLK_SIZE, FLUSH */
-        if (b->dev_feat_sel == 1) return 1; /* VERSION_1 */
-        return 0;
-    case 0x034: return 256;
-    case 0x038: return b->q.num;
-    case 0x044: return b->q.ready;
-    case 0x060: return b->int_status;
-    case 0x070: return b->status;
-    case 0x0FC: return 0;
-    }
-    return 0;
-}
-
-void virtio_write(Machine *m, int idx, uint64_t off, int size, uint64_t v) {
-    VBlk *b = m->virtio[idx];
-    (void)size;
-    if (!b || b->fd < 0) return;
-    switch (off) {
-    case 0x014: b->dev_feat_sel = v; return;
-    case 0x020:
-        if (b->drv_feat_sel == 0) b->drv_features = (b->drv_features & ~0xFFFFFFFFULL) | (uint32_t)v;
-        else b->drv_features = (b->drv_features & 0xFFFFFFFFULL) | ((uint64_t)v << 32);
-        return;
-    case 0x024: b->drv_feat_sel = v; return;
-    case 0x030: b->queue_sel = v; return;
-    case 0x038: if (b->queue_sel == 0) b->q.num = v; return;
-    case 0x044: if (b->queue_sel == 0) b->q.ready = v & 1; return;
-    case 0x050: vblk_process(m, b); return;
-    case 0x064:
-        b->int_status &= ~v;
-        if (!b->int_status) gic_set_irq(m, IRQ_VIRTIO + b->idx, 0);
-        return;
-    case 0x070:
-        b->status = v;
-        if (v == 0) { memset(&b->q, 0, sizeof(b->q)); b->int_status = 0; gic_set_irq(m, IRQ_VIRTIO + b->idx, 0); }
-        return;
-    case 0x080: b->q.desc = (b->q.desc & ~0xFFFFFFFFULL) | (uint32_t)v; return;
-    case 0x084: b->q.desc = (b->q.desc & 0xFFFFFFFFULL) | ((uint64_t)v << 32); return;
-    case 0x090: b->q.avail = (b->q.avail & ~0xFFFFFFFFULL) | (uint32_t)v; return;
-    case 0x094: b->q.avail = (b->q.avail & 0xFFFFFFFFULL) | ((uint64_t)v << 32); return;
-    case 0x0A0: b->q.used = (b->q.used & ~0xFFFFFFFFULL) | (uint32_t)v; return;
-    case 0x0A4: b->q.used = (b->q.used & 0xFFFFFFFFULL) | ((uint64_t)v << 32); return;
-    }
-}

@@ -17,7 +17,7 @@
 #define UART_SIZE       0x00001000ULL
 #define VIRTIO_BASE     0x0A000000ULL
 #define VIRTIO_SIZE     0x00000200ULL
-#define VIRTIO_COUNT    4
+#define VIRTIO_COUNT    4   /* 0 قرص، 1 شبكة، 2 رسوميات، 3 لوحة مفاتيح */
 #define RAM_BASE        0x40000000ULL
 
 #define IRQ_UART   33   /* SPI 1  */
@@ -142,7 +142,12 @@ void uart_poll(Machine *m);
 int  uart_has_input(Machine *m);
 void uart_feed(Machine *m, const char *s);
 
-void *virtio_blk_create(Machine *m, int idx, const char *path);
+/* virtio.c */
+void virtio_create_all(Machine *m, const char *disk, const char *keys);
+void virtio_poll(Machine *m);
+int  virtio_has_work(Machine *m);
+int  gpu_screenshot(Machine *m, const char *path);
+void input_arm_keys(Machine *m);
 uint64_t virtio_read(Machine *m, int idx, uint64_t off, int size);
 void virtio_write(Machine *m, int idx, uint64_t off, int size, uint64_t v);
 

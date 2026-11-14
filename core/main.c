@@ -25,12 +25,12 @@ static long load_file(const char *path, uint8_t *dst, uint64_t cap) {
 static void usage(void) {
     fprintf(stderr,
         "الاستخدام: gtv-emu -k Image [-i initrd] [-d disk.img] [-m ميغابايت] [-a \"bootargs\"]\n"
-        "           [--feed \"أوامر\"] [--max-insns N] [--no-jit] [-v]\n");
+        "           [--feed \"أوامر\"] [--keys \"نص\"] [--screenshot out.png]\n           [--max-insns N] [--no-jit] [-v]\n");
     exit(1);
 }
 
 int main(int argc, char **argv) {
-    const char *kernel = NULL, *initrd = NULL, *disk = NULL, *feed = NULL;
+    const char *kernel = NULL, *initrd = NULL, *disk = NULL, *feed = NULL, *keys = NULL, *shot = NULL;
     const char *bootargs = "console=ttyAMA0 earlycon=pl011,0x09000000 nokaslr rdinit=/init";
     uint64_t ram_mb = 512, max_insns = 0;
     int verbose = 0, use_jit = 1;
@@ -44,6 +44,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--max-insns") && i + 1 < argc) max_insns = strtoull(argv[++i], 0, 0);
         else if (!strcmp(argv[i], "-v")) verbose++;
         else if (!strcmp(argv[i], "--no-jit")) use_jit = 0;
+        else if (!strcmp(argv[i], "--keys") && i + 1 < argc) keys = argv[++i];
+        else if (!strcmp(argv[i], "--screenshot") && i + 1 < argc) shot = argv[++i];
         else if (!strcmp(argv[i], "--jit")) use_jit = 1;
         else usage();
     }
@@ -59,7 +61,7 @@ int main(int argc, char **argv) {
     m->start_ns = host_ns();
     m->gic = gic_create(m);
     m->uart = uart_create(m);
-    for (int i = 0; i < VIRTIO_COUNT; i++) m->virtio[i] = virtio_blk_create(m, i, i == 0 ? disk : NULL);
+    virtio_create_all(m, disk, keys);
 
     /* النواة عند RAM+2MB */
     uint64_t kaddr = RAM_BASE + 0x200000;
@@ -106,5 +108,6 @@ int main(int argc, char **argv) {
             (unsigned long long)m->cpu.icount, secs, m->cpu.icount / secs / 1e6,
             (unsigned long long)m->cpu.pc);
     jit_stats(m);
+    if (shot && gpu_screenshot(m, shot) < 0) fprintf(stderr, "[gtv] gpu: لا توجد صورة معروضة لالتقاطها\n");
     return m->cpu.exit_code;
 }
