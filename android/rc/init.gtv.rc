@@ -3,7 +3,6 @@
 
 on early-init
     setprop ro.crypto.state unsupported
-    setprop debug.ld.all dlerror
     setprop odsign.verification.done 1
     setprop ro.zygote zygote64
     # خدمات غير مضمّنة في الصورة المصغّرة؛ تُعلَن جاهزيتها حتى لا يتوقف init في انتظارها
@@ -43,3 +42,25 @@ on post-fs-data
 # صدفة على المنفذ التسلسلي لأغراض التشخيص
 on property:ro.debuggable=1
     start console
+
+# المؤلِّف (HWC3): خدمة APEX تعمل في مساحة أسماء معزولة لا تستطيع تحميل mapper.minigbm.so
+# من /vendor/lib64/hw، فتتوقف برسالة «gralloc-mapper is missing». الحل: إيقاف خدمة APEX
+# ونسخ الملف التنفيذي إلى مسار يُعامل كقسم vendor في linkerconfig، مع LD_LIBRARY_PATH
+# يشير إلى مكتبات الحزمة نفسها، فيُحمَّل mapper من مساحة أسماء المورّد العادية.
+on post-fs-data
+    stop vendor.hwcomposer-3
+    mkdir /data/local 0751 root root
+    mkdir /data/local/tests 0755 root root
+    mkdir /data/local/tests/vendor 0755 root root
+    copy /apex/com.android.hardware.graphics.composer/bin/hw/android.hardware.graphics.composer3-service.ranchu /data/local/tests/vendor/hwc3
+    chmod 0755 /data/local/tests/vendor/hwc3
+
+service gtv.hwc3 /data/local/tests/vendor/hwc3
+    class hal animation
+    interface aidl android.hardware.graphics.composer3.IComposer/default
+    user system
+    group graphics drmrpc
+    capabilities SYS_NICE
+    setenv LD_LIBRARY_PATH /apex/com.android.hardware.graphics.composer/lib64:/vendor/lib64/hw
+    seclabel u:r:hal_graphics_composer_default:s0
+    onrestart restart surfaceflinger
