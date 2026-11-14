@@ -374,7 +374,7 @@ int gpu_screenshot(Machine *m, const char *path) {
 
 /* ========================== الإدخال ========================== */
 typedef struct {
-    int kind;                 /* 0 لوحة مفاتيح */
+    int kind;                 /* 0 لوحة مفاتيح وريموت، 1 شاشة لمس */
     uint8_t select, subsel;
     uint16_t pending[512][3]; /* أحداث تنتظر مخازن الضيف: type, code, value */
     int ph, pt;
@@ -383,7 +383,10 @@ typedef struct {
     uint64_t next_ns;
 } Input;
 
-static Input *g_kbd;
+static Input *g_kbd, *g_touch;
+#define TOUCH_W 1280
+#define TOUCH_H 720
+static const uint16_t TV_KEYS[] = { 113, 114, 115, 116, 139, 158, 163, 164, 165, 172, 353, 362, 402, 403, 0 };
 
 static void input_cfg(VDev *d, uint8_t *cfg) {
     Input *in = d->priv;
@@ -391,12 +394,38 @@ static void input_cfg(VDev *d, uint8_t *cfg) {
     cfg[0] = in->select; cfg[1] = in->subsel;
     uint8_t *u = cfg + 8, size = 0;
     switch (in->select) {
-    case 1: { const char *s = "gtv-emu keyboard"; size = strlen(s); memcpy(u, s, size); break; } /* ID_NAME */
-    case 2: { const char *s = "gtv0"; size = strlen(s); memcpy(u, s, size); break; }           /* ID_SERIAL */
-    case 3: { uint16_t ids[4] = { 6, 0x1af4, 0x0001, 1 }; memcpy(u, ids, 8); size = 8; break; } /* BUS_VIRTUAL */
+    case 1: { const char *s = in->kind ? "gtv-emu touchscreen" : "gtv-emu keyboard"; size = strlen(s); memcpy(u, s, size); break; } /* ID_NAME */
+    case 2: { const char *s = in->kind ? "gtv1" : "gtv0"; size = strlen(s); memcpy(u, s, size); break; } /* ID_SERIAL */
+    case 3: { uint16_t ids[4] = { 6, 0x1af4, (uint16_t)(1 + in->kind), 1 }; memcpy(u, ids, 8); size = 8; break; } /* BUS_VIRTUAL */
+    case 0x10: /* PROP_BITS */
+        if (in->kind) { u[0] = 1 << 1; size = 1; } /* INPUT_PROP_DIRECT */
+        break;
     case 0x11: /* EV_BITS */
-        if (in->subsel == 1) { for (int i = 1; i < 256; i++) u[i / 8] |= 1 << (i % 8); size = 32; }
-        else if (in->subsel == 0x14) { size = 0; } /* EV_REP يدار في النواة */
+        if (in->kind == 0 && in->subsel == 1) {
+            for (int i = 1; i < 256; i++) u[i / 8] |= 1 << (i % 8);
+            for (int i = 0; TV_KEYS[i]; i++) u[TV_KEYS[i] / 8] |= 1 << (TV_KEYS[i] % 8); /* مفاتيح الريموت */
+            size = 128;
+        } else if (in->kind == 1 && in->subsel == 1) {
+            u[0x14a / 8] |= 1 << (0x14a % 8); size = 0x14a / 8 + 1;        /* BTN_TOUCH */
+        } else if (in->kind == 1 && in->subsel == 3) {
+            int ax[] = { 0, 1, 0x2f, 0x35, 0x36, 0x39 };
+            for (int i = 0; i < 6; i++) u[ax[i] / 8] |= 1 << (ax[i] % 8);
+            size = 0x39 / 8 + 1;
+        }
+        break;
+    case 0x12: /* ABS_INFO */
+        if (in->kind == 1) {
+            uint32_t info[5] = {0};
+            switch (in->subsel) {
+            case 0: case 0x35: info[1] = TOUCH_W - 1; break;
+            case 1: case 0x36: info[1] = TOUCH_H - 1; break;
+            case 0x2f: info[1] = 9; break;      /* عشرة أصابع */
+            case 0x39: info[1] = 65535; break;
+            default: goto noabs;
+            }
+            memcpy(u, info, 20); size = 20;
+        }
+    noabs:
         break;
     }
     cfg[2] = size;
@@ -465,6 +494,66 @@ static int ascii_key(int ch, int *shift) {
     if ((p = strchr(z, ch))) return 44 + (p - z);
     if ((p = strchr(zs, ch))) { *shift = 1; return 44 + (p - zs); }
     return -1;
+}
+
+/* ===== سيناريو أحداث الريموت واللمس (--events) =====
+ * الصيغة: key:HOME;key:353;tap:640,360;swipe:100,300,900,300;wait:500
+ * يُفعَّل بالمحرف \004 في --feed. */
+static const char *ev_script;
+static int ev_armed;
+static uint64_t ev_next;
+static uint32_t ev_track;
+
+static int key_by_name(const char *n, int len) {
+    static const struct { const char *n; int k; } T[] = {
+        { "HOME", 172 }, { "BACK", 158 }, { "UP", 103 }, { "DOWN", 108 }, { "LEFT", 105 }, { "RIGHT", 106 },
+        { "OK", 353 }, { "SELECT", 353 }, { "ENTER", 28 }, { "MENU", 139 }, { "PLAYPAUSE", 164 },
+        { "NEXT", 163 }, { "PREV", 165 }, { "VOLUP", 115 }, { "VOLDOWN", 114 }, { "MUTE", 113 },
+        { "POWER", 116 }, { "GUIDE", 362 }, { "CHUP", 402 }, { "CHDOWN", 403 }, { NULL, 0 } };
+    if (len > 0 && n[0] >= '0' && n[0] <= '9') return atoi(n);
+    for (int i = 0; T[i].n; i++) if ((int)strlen(T[i].n) == len && !strncmp(T[i].n, n, len)) return T[i].k;
+    return -1;
+}
+
+static void touch_point(Input *t, int x, int y, int down) {
+    if (down == 1) { input_queue(t, 3, 0x2f, 0); input_queue(t, 3, 0x39, ++ev_track & 0xFFFF); }
+    if (down) {
+        input_queue(t, 3, 0x35, x); input_queue(t, 3, 0x36, y);
+        if (down == 1) input_queue(t, 1, 0x14a, 1);
+        input_queue(t, 3, 0, x); input_queue(t, 3, 1, y);
+    } else {
+        input_queue(t, 3, 0x39, 0xFFFFFFFF); input_queue(t, 1, 0x14a, 0);
+    }
+    input_queue(t, 0, 0, 0);
+}
+
+void input_set_events(const char *s) { ev_script = s; }
+void input_arm_events(void) { if (ev_script) ev_armed = 1; }
+
+static void events_poll(void) {
+    if (!ev_armed || !ev_script || !*ev_script || host_ns() < ev_next) return;
+    const char *s = ev_script, *e = strchr(s, ';');
+    int len = e ? (int)(e - s) : (int)strlen(s);
+    ev_script = e ? e + 1 : s + len;
+    uint64_t delay = 100000000ULL;
+    int a[4] = {0};
+    if (!strncmp(s, "key:", 4) && g_kbd) {
+        int k = key_by_name(s + 4, len - 4);
+        if (k > 0) {
+            input_queue(g_kbd, 1, k, 1); input_queue(g_kbd, 0, 0, 0);
+            input_queue(g_kbd, 1, k, 0); input_queue(g_kbd, 0, 0, 0);
+        }
+    } else if (!strncmp(s, "tap:", 4) && g_touch && sscanf(s + 4, "%d,%d", &a[0], &a[1]) == 2) {
+        touch_point(g_touch, a[0], a[1], 1);
+        touch_point(g_touch, 0, 0, 0);
+    } else if (!strncmp(s, "swipe:", 6) && g_touch && sscanf(s + 6, "%d,%d,%d,%d", &a[0], &a[1], &a[2], &a[3]) == 4) {
+        for (int i = 0; i <= 8; i++)
+            touch_point(g_touch, a[0] + (a[2] - a[0]) * i / 8, a[1] + (a[3] - a[1]) * i / 8, i == 0 ? 1 : 2);
+        touch_point(g_touch, 0, 0, 0);
+    } else if (!strncmp(s, "wait:", 5)) {
+        delay = strtoull(s + 5, NULL, 10) * 1000000ULL;
+    }
+    ev_next = host_ns() + delay;
 }
 
 void input_set_keys(Machine *m, const char *keys) { (void)m; if (g_kbd) g_kbd->keys = keys; }
@@ -742,13 +831,20 @@ void virtio_create_all(Machine *m, const char *disk, const char *keys, const cha
     d = vdev_new(4, VT_SND, 4);
     d->priv = sn; d->notify = snd_notify; d->cfg_read = snd_cfg;
     m->virtio[4] = d;
+    /* 5: شاشة لمس */
+    Input *tc = calloc(1, sizeof(Input));
+    tc->kind = 1;
+    g_touch = tc;
+    d = vdev_new(5, VT_INPUT, 2);
+    d->priv = tc; d->notify = input_notify; d->cfg_read = input_cfg; d->cfg_write = input_cfg_write;
+    m->virtio[5] = d;
 }
 
 void virtio_poll(Machine *m) {
     for (int i = 0; i < VIRTIO_COUNT; i++) {
         VDev *d = m->virtio[i];
         if (!d || !(d->status & 4)) continue; /* DRIVER_OK */
-        if (d->type == VT_INPUT) input_poll(m, d);
+        if (d->type == VT_INPUT) { if (d->priv == g_kbd) events_poll(); input_poll(m, d); }
         else if (d->type == VT_NET) { netstack_poll(); net_rx_deliver(m, d); }
         else if (d->type == VT_SND) snd_tx_complete(m, d, 0);
     }
@@ -758,6 +854,7 @@ int virtio_has_work(Machine *m) {
     (void)m;
     if (g_snd && g_snd->pt != g_snd->ph) return 1;
     if (netstack_active()) return 1;
+    if (ev_armed && ev_script && *ev_script) return 1;
     return g_kbd && g_kbd->keys_armed && g_kbd->keys && *g_kbd->keys;
 }
 

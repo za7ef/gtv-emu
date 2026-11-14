@@ -18,7 +18,7 @@
 #define UART_SIZE       0x00001000ULL
 #define VIRTIO_BASE     0x0A000000ULL
 #define VIRTIO_SIZE     0x00000200ULL
-#define VIRTIO_COUNT    5   /* 0 قرص، 1 شبكة، 2 رسوميات، 3 لوحة مفاتيح، 4 صوت */
+#define VIRTIO_COUNT    6   /* 0 قرص، 1 شبكة، 2 رسوميات، 3 لوحة مفاتيح وريموت، 4 صوت، 5 لمس */
 #define RAM_BASE        0x40000000ULL
 
 #define IRQ_UART   33   /* SPI 1  */
@@ -152,6 +152,16 @@ void uart_feed(Machine *m, const char *s);
 /* virtio.c */
 void virtio_create_all(Machine *m, const char *disk, const char *keys, const char *audio);
 void snd_close(Machine *m);
+typedef struct {
+    uint8_t *kernel; size_t kernel_len; int kernel_gz;
+    uint8_t *ramdisk; size_t ramdisk_len; size_t bootconfig_len;
+    char cmdline[4096];
+    uint32_t header_version, vendor_version;
+} AndroidBoot;
+int android_load(AndroidBoot *ab, const char *boot, const char *vendor, const char **props, int nprops);
+uint8_t *gunzip(const uint8_t *d, size_t n, size_t *outlen);
+void input_set_events(const char *s);
+void input_arm_events(void);
 void virtio_poll(Machine *m);
 int  virtio_has_work(Machine *m);
 int  gpu_screenshot(Machine *m, const char *path);

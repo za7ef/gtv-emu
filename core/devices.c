@@ -397,6 +397,7 @@ void uart_poll(Machine *m) {
                 u->prompt_seen = 0; u->feed_ns = now + 200000000ULL; break;
             }
             if (ch == '\x03') { input_arm_keys(m); continue; } /* ابدأ الكتابة عبر لوحة مفاتيح virtio */
+            if (ch == '\x04') { input_arm_events(); continue; } /* ابدأ سيناريو الريموت واللمس */
             if (ch == '\x01') { u->feed_ns = now + 1500000000ULL; continue; } /* انتظار */
             u->rx[u->rx_head] = ch; u->rx_head = (u->rx_head + 1) & 255; changed = 1;
             if (ch == '\n' || ch == '\r') { u->feed_ns = now + 300000000ULL; break; }

@@ -24,12 +24,13 @@ static long load_file(const char *path, uint8_t *dst, uint64_t cap) {
 
 static void usage(void) {
     fprintf(stderr,
-        "الاستخدام: gtv-emu -k Image [-i initrd] [-d disk.img] [-m ميغابايت] [-a \"bootargs\"]\n"
-        "           [--feed \"أوامر\"] [--keys \"نص\"] [--screenshot out.png] [--audio out.wav] [--smp N]\n           [--max-insns N] [--no-jit] [-v]\n");
+        "الاستخدام: gtv-emu (-k Image[.gz] | --bootimg boot.img [--vendor-boot vendor_boot.img] [--androidboot مفتاح=قيمة]) [-i initrd] [-d disk.img] [-m ميغابايت] [-a \"bootargs\"]\n"
+        "           [--feed \"أوامر\"] [--keys \"نص\"] [--screenshot out.png] [--audio out.wav] [--events \"key:HOME;tap:640,360\"] [--smp N]\n           [--max-insns N] [--no-jit] [-v]\n");
     exit(1);
 }
 
 int main(int argc, char **argv) {
+    const char *bootimg = NULL, *vendorimg = NULL, *props[32]; int nprops = 0;
     const char *kernel = NULL, *initrd = NULL, *disk = NULL, *feed = NULL, *keys = NULL, *shot = NULL, *audio = NULL;
     const char *bootargs = "console=ttyAMA0 earlycon=pl011,0x09000000 nokaslr rdinit=/init";
     uint64_t ram_mb = 512, max_insns = 0;
@@ -48,10 +49,14 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--keys") && i + 1 < argc) keys = argv[++i];
         else if (!strcmp(argv[i], "--screenshot") && i + 1 < argc) shot = argv[++i];
         else if (!strcmp(argv[i], "--audio") && i + 1 < argc) audio = argv[++i];
+        else if (!strcmp(argv[i], "--events") && i + 1 < argc) input_set_events(argv[++i]);
         else if (!strcmp(argv[i], "--jit")) use_jit = 1;
+        else if (!strcmp(argv[i], "--bootimg") && i + 1 < argc) bootimg = argv[++i];
+        else if (!strcmp(argv[i], "--vendor-boot") && i + 1 < argc) vendorimg = argv[++i];
+        else if (!strcmp(argv[i], "--androidboot") && i + 1 < argc && nprops < 32) props[nprops++] = argv[++i];
         else usage();
     }
-    if (!kernel || ncpu < 1 || ncpu > MAX_CPUS) usage();
+    if ((!kernel && !bootimg) || ncpu < 1 || ncpu > MAX_CPUS) usage();
 
     Machine *m = calloc(1, sizeof(Machine));
     gm = m;
@@ -67,13 +72,40 @@ int main(int argc, char **argv) {
 
     /* النواة عند RAM+2MB */
     uint64_t kaddr = RAM_BASE + 0x200000;
-    long ksz = load_file(kernel, m->ram + (kaddr - RAM_BASE), m->ram_size - 0x200000);
+    AndroidBoot ab;
+    static char abargs[8192];
+    long ksz;
+    if (bootimg) {
+        if (android_load(&ab, bootimg, vendorimg, props, nprops) < 0) return 1;
+        if (ab.kernel_len > m->ram_size - 0x200000) { fprintf(stderr, "النواة أكبر من الذاكرة\n"); return 1; }
+        memcpy(m->ram + (kaddr - RAM_BASE), ab.kernel, ab.kernel_len);
+        ksz = ab.kernel_len;
+        /* سطر الأوامر: ما في الصور، ثم ما يضيفه المستخدم عبر -a */
+        snprintf(abargs, sizeof abargs, "%s %s", ab.cmdline, bootargs);
+        bootargs = abargs;
+        fprintf(stderr, "[gtv] boot.img إصدار %u%s: نواة %zu بايت%s، قرص أولي %zu بايت، bootconfig %zu بايت\n",
+                ab.header_version, vendorimg ? " مع vendor_boot" : "", ab.kernel_len, ab.kernel_gz ? " (فُكّ ضغطها من gzip)" : "",
+                ab.ramdisk_len, ab.bootconfig_len);
+    } else {
+        ksz = load_file(kernel, m->ram + (kaddr - RAM_BASE), m->ram_size - 0x200000);
+        uint8_t *kp = m->ram + (kaddr - RAM_BASE);
+        if (ksz > 2 && kp[0] == 0x1f && kp[1] == 0x8b) { /* Image.gz */
+            size_t ol; uint8_t *o = gunzip(kp, ksz, &ol);
+            if (!o || ol > m->ram_size - 0x200000) { fprintf(stderr, "فشل فك ضغط النواة\n"); return 1; }
+            memcpy(kp, o, ol); ksz = ol; free(o);
+        }
+    }
     uint64_t image_size;
     memcpy(&image_size, m->ram + (kaddr - RAM_BASE) + 16, 8);
     if (image_size < (uint64_t)ksz) image_size = ksz;
 
     uint64_t initrd_start = 0, initrd_end = 0;
-    if (initrd) {
+    if (bootimg && ab.ramdisk_len) {
+        initrd_start = RAM_BASE + (m->ram_size / 2 > 0x8000000 ? 0x8000000 : m->ram_size / 2);
+        if (initrd_start < kaddr + image_size + 0x200000) initrd_start = (kaddr + image_size + 0x400000) & ~0xFFFFFULL;
+        memcpy(m->ram + (initrd_start - RAM_BASE), ab.ramdisk, ab.ramdisk_len);
+        initrd_end = initrd_start + ab.ramdisk_len;
+    } else if (initrd) {
         initrd_start = RAM_BASE + (m->ram_size / 2 > 0x8000000 ? 0x8000000 : m->ram_size / 2);
         if (initrd_start < kaddr + image_size + 0x200000) initrd_start = (kaddr + image_size + 0x400000) & ~0xFFFFFULL;
         long isz = load_file(initrd, m->ram + (initrd_start - RAM_BASE), m->ram_size - (initrd_start - RAM_BASE));
