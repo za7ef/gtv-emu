@@ -9,7 +9,7 @@ jobs:
       - name: البناء
         run: CC=gcc ./build.sh
       - name: اختبارات الوحدة
-        run: gcc -O1 -w -o unit tests/unit_test.c core/simd.c core/devices.c core/fdt.c core/jit.c -lm && ./unit
+        run: gcc -O1 -w -o unit tests/unit_test.c core/simd.c core/devices.c core/virtio.c core/fdt.c core/jit.c -lm && ./unit
       - name: اختبار الإقلاع
         run: ./tests/boot_test.sh
       - name: حفظ سجل الإقلاع
@@ -17,7 +17,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: boot-log
-          path: /tmp/gtv-emu-test/boot.log
+          path: |
+            /tmp/gtv-emu-test/boot.log
+            /tmp/gtv-emu-test/screen.png
   # اختبار المترجم الفوري على معالج ARM64 حقيقي، مع مقارنة السرعة بالمفسّر
   jit-arm64:
     runs-on: ubuntu-24.04-arm
