@@ -68,10 +68,18 @@
 - **امتدادات التشفير**: ‏AESE/AESD/AESMC/AESIMC وSHA1 وSHA256 وPMULL ذات 64 بت، مع إعلانها في ID_AA64ISAR0. تحقّقنا منها بمقارنة تفاضلية مع qemu.
 - **مجموعة «ثلاثة مختلفة»**: ‏UADDW/SADDW/USUBW/SSUBW وSQDMULL/SQDMLAL/SQDMLSL (مع علم FPSR.QC)، وتصحيح التقريب في RADDHN/RSUBHN. غياب UADDW كان يسبب SIGILL في الخدمات.
 
+### الإطار الأول (تحديث المرحلة السادسة)
+أصبح أندرويد يعرض أول إطار حقيقي: رسم الإقلاع (bootanimation) الرسمي يظهر على شاشة virtio-gpu بدقة 1280×720، بعد أن يمر عبر SurfaceFlinger وRenderEngine ‏(ANGLE فوق SwiftShader) ثم المؤلِّف ranchu ثم KMS. اللقطة في [screenshots/m6-bootanimation.png](screenshots/m6-bootanimation.png) والسجل في [boot-log-m6b.txt](boot-log-m6b.txt).
+
+ما لزم لذلك:
+- **المؤلِّف**: خدمة APEX الخاصة به تعمل في مساحة أسماء معزولة لا تصل إلى mapper.minigbm.so في /vendor/lib64/hw، فتتوقف برسالة «gralloc-mapper is missing». الحل في init.gtv.rc: إيقاف خدمة APEX، ونسخ الملف التنفيذي عند الإقلاع إلى /data/local/tests/vendor (يعامله linkerconfig كقسم vendor)، وتشغيله كخدمة gtv.hwc3 مع LD_LIBRARY_PATH يشير إلى مكتبات الحزمة ثم /vendor/lib64/hw.
+- **كومة DMA-BUF**: إضافة الوحدة system_heap.ko إلى قرص المورّد، إذ يحتاجها minigbm لتخصيص المخازن.
+- **تعليمات معالج جديدة**: ‏FRINTA/FRINTX/FRINTI المتجهية، وFRECPE/FRSQRTE المتجهية (بقيمة دقيقة بدل التقدير)، وSHLL/SHLL2، وFMLA/FMLS/FMUL/FMULX القياسية بالعنصر. كان غيابها يُسقط SurfaceFlinger وbootanimation بإشارة SIGILL.
+- **ملفات إضافية**: ‏/system/bin/bootanimation وframework-res.apk (لصور الشعار الافتراضي).
+
 ### ما لم يكتمل بعد
-- خدمة المؤلِّف (HWC3، سواء ranchu أو drm_hwcomposer) تتوقف برسالة «gralloc-mapper is missing»، لأن مكتبة mapper.minigbm.so الموجودة في /vendor/lib64/hw لا تُحمَّل داخل مساحة الأسماء المعزولة لحزمة APEX الخاصة بالمؤلِّف. لذلك يتوقف SurfaceFlinger بعدها برسالة «Can't create AidlComposerClient»، ولم يُعرض أي إطار بعد.
-- جرّبنا إضافة مسارات /vendor إلى إعداد الرابط لقسم المؤلِّف فلم يكفِ ذلك؛ والخطوة التالية تتبّع خطأ dlopen الفعلي (مثلًا بتفعيل debug.ld.all) أو تشغيل مؤلِّف خارج APEX من /vendor/bin/hw.
-- الأداء نحو 66 مليون تعليمة في الثانية بالمفسّر وحده على هذا المضيف، فيستغرق الوصول إلى SurfaceFlinger نحو 10 دقائق.
+- **Zygote والواجهة (launcher)**: لم تُجرَّب. تحتاج حزمة ART وملفات framework (مئات الميغابايتات) وsystem_server، وذاكرة ضيف لا تقل عمليًا عن 2 غيغابايت. على هذا المضيف لا تتوفر إلا نحو 1.5 غيغابايت ذاكرة متاحة و1.4 غيغابايت قرص، والمفسّر يعمل بنحو 64 مليون تعليمة في الثانية (الوصول إلى رسم الإقلاع يستغرق نحو 12 دقيقة)، فالمرحلة التالية تحتاج المترجم الفوري (JIT) على جهاز ARM64 حقيقي أو مضيفًا أكبر.
+- تقديرات FRECPE/FRSQRTE ليست مطابقة بتًا ببت للعتاد، وتعليمات FRINTX/FRINTI تفترض وضع التقريب الافتراضي.
 
 ### إعادة الإنتاج
 - `android/scripts/build-system.sh <مجلد>`: يبني sys.img من قائمة `android/files.txt` مع ملفات rc في `android/rc/`.

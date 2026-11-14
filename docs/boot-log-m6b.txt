@@ -1,0 +1,9 @@
+[   47.438305][    T1] init: starting service 'bootanim'...
+[   55.489397][   T97] type=1400 audit(55.440:38): avc:  denied  { open } for  comm="BootAnimation" path="/dev/__properties__/u:object_r:vendor_default_prop:s0" dev="tmpfs" ino=380 scontext=u:r:bootanim:s0 tcontext=u:object_r:vendor_default_prop:s0 tclass=file permissive=1
+[   55.494293][   T97] type=1400 audit(55.448:39): avc:  denied  { getattr } for  comm="BootAnimation" path="/dev/__properties__/u:object_r:vendor_default_prop:s0" dev="tmpfs" ino=380 scontext=u:r:bootanim:s0 tcontext=u:object_r:vendor_default_prop:s0 tclass=file permissive=1
+[   55.500832][   T97] type=1400 audit(55.448:40): avc:  denied  { map } for  comm="BootAnimation" path="/dev/__properties__/u:object_r:vendor_default_prop:s0" dev="tmpfs" ino=380 scontext=u:r:bootanim:s0 tcontext=u:object_r:vendor_default_prop:s0 tclass=file permissive=1
+01-01 00:00:56.061   137   140 D BootAnimation: No animation file
+01-01 00:00:56.062   137   140 D BootAnimation: BootAnimationShownTiming start time: 56061ms
+[gtv] توقف بعد 60477145989 تعليمة خلال 1189.6 ثانية (50.8 مليون تعليمة/ثانية) pc=ffffffc00811f748
+[gtv] المعالجات: 2
+[gtv] gpu: لقطة شاشة 1280x768 في /tmp/quest/agent/emu6/s1.png (بكسلات غير سوداء: 16791، تحديثات: 631)
