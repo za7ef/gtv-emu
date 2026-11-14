@@ -22,7 +22,7 @@
 - **virtio-mmio:** ناقل عام بالإصدار الثاني من الواجهة، عليه قرص (virtio-blk) وشبكة (virtio-net) ورسوميات ثنائية الأبعاد (virtio-gpu) ولوحة مفاتيح (virtio-input) وصوت (virtio-snd)، مع شبكة NAT داخلية.
 - **تعدد المعالجات:** حتى أربعة معالجات افتراضية عبر PSCI.
 - **الريموت واللمس:** مفاتيح ريموت Android TV وشاشة لمس متعددة اللمسات.
-- **صور أندرويد:** إقلاع boot.img وvendor_boot.img مباشرة مع bootconfig، ومُختبر بنواة GKI الرسمية من Google. انظر [docs/ANDROID.md](docs/ANDROID.md). التفاصيل في [docs/DEVICES.md](docs/DEVICES.md).
+- **صور أندرويد:** إقلاع boot.img وvendor_boot.img وinit_boot.img مباشرة مع bootconfig، ومُختبر بنواة GKI الرسمية من Google ووحدات virtio الرسمية، وبـinit أندرويد 16 الحقيقي حتى نهاية المرحلة الأولى. انظر [docs/ANDROID.md](docs/ANDROID.md). التفاصيل في [docs/DEVICES.md](docs/DEVICES.md).
 - **شجرة الأجهزة (FDT):** تُبنى برمجيًا دون أدوات خارجية.
 
 - **المترجم الفوري (JIT):** ترجمة A64 إلى A64 بكتل أساسية مع ربط مباشر ومسار سريع للذاكرة، ويعمل تلقائيًا على مضيف ARM64. التفاصيل في [docs/JIT.md](docs/JIT.md).
@@ -65,7 +65,7 @@ cc -O1 -o unit tests/unit_test.c core/simd.c core/devices.c core/virtio.c core/n
 | `--keys` | نص يُكتب عبر لوحة مفاتيح virtio بعد الأمر `\003` في `--feed` |
 | `--screenshot` | حفظ الإطار المعروض من virtio-gpu في ملف PNG عند التوقف |
 | `--audio` | حفظ صوت virtio-snd في ملف WAV |
-| `--bootimg` / `--vendor-boot` | إقلاع صور أندرويد |
+| `--bootimg` / `--vendor-boot` / `--init-boot` | إقلاع صور أندرويد |
 | `--androidboot` | إضافة خاصية `androidboot.*` إلى bootconfig |
 | `--events` | سيناريو ريموت ولمس آلي |
 | `--smp` | عدد المعالجات (من 1 إلى 4) |
