@@ -29,6 +29,13 @@ if [ -b /dev/vda ]; then
   echo "virtio-blk read: $(head -c 24 /dev/vda)"
   echo "WRITTEN-BY-GUEST" | dd of=/dev/vda bs=512 seek=1 conv=notrunc 2>/dev/null && sync && echo "virtio-blk write: ok"
 fi
+if [ -c /dev/tty1 ] && [ -e /sys/class/graphics/fb0 ]; then
+  echo "virtio-gpu: $(cat /sys/class/graphics/fb0/name) $(cat /sys/class/graphics/fb0/virtual_size)"
+  printf '\n  gtv-emu: virtio-gpu framebuffer console\n\n' > /dev/tty1
+  setsid sh -c 'exec sh </dev/tty1 >/dev/tty1 2>&1' &
+fi
+[ -d /sys/class/net/eth0 ] && echo "virtio-net: eth0 $(cat /sys/class/net/eth0/address)"
+for e in /sys/class/input/input*/name; do [ -f "$e" ] && echo "input: $(cat $e)"; done
 exec setsid sh -c 'exec sh </dev/ttyAMA0 >/dev/ttyAMA0 2>&1'
 '''
 
