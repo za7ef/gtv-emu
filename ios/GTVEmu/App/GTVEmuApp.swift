@@ -3,6 +3,8 @@ import SwiftUI
 
 @main
 struct GTVEmuApp: App {
+    @StateObject private var updater = UpdateChecker.shared
+
     init() { _ = EmulatorEngine.shared }
 
     var body: some Scene {
@@ -19,6 +21,12 @@ struct GTVEmuApp: App {
             }
             .environment(\.layoutDirection, .rightToLeft)
             .preferredColorScheme(.dark)
+            .task { await updater.check() }
+            .sheet(item: $updater.available) { release in
+                UpdateSheet(release: release, onLater: { updater.later() }, onUpdate: { updater.dismiss() })
+                    .environment(\.layoutDirection, .rightToLeft)
+                    .preferredColorScheme(.dark)
+            }
         }
     }
 }

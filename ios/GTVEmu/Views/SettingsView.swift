@@ -40,15 +40,19 @@ struct SettingsView: View {
             Section {
                 TextField("المستودع", text: $repo).textInputAutocapitalization(.never).autocorrectionDisabled()
                 TextField("وسم الإصدار (أو latest)", text: $releaseTag).textInputAutocapitalization(.never).autocorrectionDisabled()
-                SecureField("رمز وصول GitHub (للمستودع الخاص)", text: $token)
+                SecureField("رمز وصول GitHub (اختياري)", text: $token)
                 TextField("رابط manifest.json بديل (اختياري)", text: $manifestURL)
                     .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
             } header: { Text("مصدر الصور") } footer: {
-                Text("تُقرأ قائمة الصور من ملف manifest.json في إصدار المستودع. المستودع الخاص يحتاج رمز وصول بصلاحية قراءة المحتوى.")
+                Text("تُقرأ قائمة الصور من ملف manifest.json في إصدار المستودع. رمز الوصول مطلوب فقط عند استخدام مستودع خاص.")
             }
 
             Section("حول") {
-                LabeledContent("الإصدار", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")
+                NavigationLink {
+                    AboutView()
+                } label: {
+                    LabeledContent("حول التطبيق", value: "\(UpdateChecker.currentVersion) (\(UpdateChecker.currentBuild))")
+                }
                 LabeledContent("مجلد الصور", value: "ملفات ← على جهازي ← GTV Emu ← images")
             }
         }
