@@ -1,17 +1,16 @@
-# بناء تطبيق iOS غير موقّع (IPA) على مشغّل macOS.
+# بناء تطبيق iOS غير موقّع (IPA) على مشغّل macOS، ونشره في إصدار مستقل لكل بناء.
 # يُوقَّع الملف لاحقًا على الجهاز بأداة التثبيت الجانبي (SideStore أو Feather أو غيرهما).
 name: تطبيق iOS
 on:
   push:
+    branches: [main]
     paths: ["core/**", "ios/**", ".github/workflows/ios.yml"]
   workflow_dispatch:
-    inputs:
-      release_tag:
-        description: "وسم إصدار لإرفاق ملف IPA به (اختياري)"
-        required: false
-        default: ""
 permissions:
   contents: write
+concurrency:
+  group: ios-build
+  cancel-in-progress: false
 jobs:
   ipa:
     runs-on: macos-15
@@ -19,29 +18,67 @@ jobs:
       - uses: actions/checkout@v4
       - name: الأدوات
         run: brew install xcodegen ldid
+      - name: رقم الإصدار والبناء
+        id: ver
+        run: |
+          VERSION=$(sed -n 's/^ *MARKETING_VERSION: *"\{0,1\}\([0-9.]*\)"\{0,1\}.*/\1/p' ios/project.yml | head -1)
+          test -n "$VERSION"
+          BUILD=${{ github.run_number }}
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION-b$BUILD" >> "$GITHUB_OUTPUT"
+          echo "الإصدار $VERSION، البناء $BUILD"
       - name: توليد مشروع Xcode
         working-directory: ios
         run: xcodegen generate
       - name: البناء
         working-directory: ios
         run: |
+          set -o pipefail
           xcodebuild -project GTVEmu.xcodeproj -target GTVEmu -configuration Release -sdk iphoneos \
-            ARCHS=arm64 SYMROOT="$PWD/build" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build | tail -40
+            ARCHS=arm64 SYMROOT="$PWD/build" \
+            MARKETING_VERSION=${{ steps.ver.outputs.version }} CURRENT_PROJECT_VERSION=${{ steps.ver.outputs.build }} \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build > build.log 2>&1 || {
+              echo "::error::فشل البناء. الأخطاء:"
+              grep -E "error:|fatal error|\*\* BUILD FAILED" build.log | head -100
+              echo "---- آخر 200 سطر من السجل ----"
+              tail -200 build.log
+              exit 1
+            }
+          grep -E "warning:" build.log | grep -v "/core/" | head -50 || true
+          tail -5 build.log
           test -d build/Release-iphoneos/GTVEmu.app
+      - name: سجل البناء
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: ios/build.log
+          if-no-files-found: ignore
       - name: تضمين الصلاحيات وتجميع IPA
         working-directory: ios
         run: |
           # توقيع وهمي يضمّن get-task-allow وصلاحيات الذاكرة؛ أدوات التثبيت تعيد التوقيع بشهادة المستخدم
-          ldid -SGTVEmu/GTVEmu.entitlements build/Release-iphoneos/GTVEmu.app || echo "تخطٍّ: ldid"
+          ldid -SGTVEmu/GTVEmu.entitlements build/Release-iphoneos/GTVEmu.app
+          ldid -e build/Release-iphoneos/GTVEmu.app/GTVEmu | grep -q get-task-allow
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" -c "Print :CFBundleVersion" build/Release-iphoneos/GTVEmu.app/Info.plist
           rm -rf Payload && mkdir Payload && cp -R build/Release-iphoneos/GTVEmu.app Payload/
-          zip -qry GTVEmu-unsigned.ipa Payload
-          ls -la GTVEmu-unsigned.ipa
+          zip -qry GTVEmu.ipa Payload
+          ls -la GTVEmu.ipa
       - uses: actions/upload-artifact@v4
         with:
-          name: GTVEmu-unsigned-ipa
-          path: ios/GTVEmu-unsigned.ipa
-      - name: إرفاق الملف بالإصدار
-        if: ${{ github.event.inputs.release_tag != '' }}
+          name: GTVEmu-ipa
+          path: ios/GTVEmu.ipa
+      - name: نشر الإصدار
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.inputs.release_tag }}" ios/GTVEmu-unsigned.ipa --clobber
+          TAG: ${{ steps.ver.outputs.tag }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          BUILD: ${{ steps.ver.outputs.build }}
+        run: |
+          cp ios/GTVEmu.ipa "GTVEmu-$VERSION-b$BUILD.ipa"
+          gh release create "$TAG" "GTVEmu-$VERSION-b$BUILD.ipa" \
+            --target "${{ github.sha }}" \
+            --title "GTV Emu $VERSION (بناء $BUILD)" \
+            --notes-file ios/whatsnew.md \
+            --latest
