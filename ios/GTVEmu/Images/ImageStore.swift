@@ -21,7 +21,10 @@ struct ImageProfile: Codable, Identifiable, Hashable {
     var androidboot: [String]?
     var ramMB: Int?               // الذاكرة المقترحة
     var cores: Int?
+    var experimental: Bool?       // نظام تجريبي لا يكتمل إقلاعه بعد
+    var note: String?             // سطر قصير يظهر تحت الاسم
     var files: [ImageFile]
+    var downloadSize: Int64 { files.reduce(0) { $0 + ($1.size ?? 0) } }
 }
 
 struct ImageFile: Codable, Identifiable, Hashable {
@@ -49,6 +52,24 @@ final class ImageStore: NSObject, ObservableObject {
     @Published var lastError: String?
 
     private var tasks: [Int: (profile: ImageProfile, file: ImageFile)] = [:]
+    private var resumeData: [String: Data] = [:]   // استئناف التنزيل المنقطع لكل ملف
+
+    /// هل يُنزَّل أي ملف من هذا النظام الآن؟
+    func isDownloading(_ p: ImageProfile) -> Bool { p.files.contains { progress[$0.id] != nil } }
+    /// نسبة تنزيل النظام كاملًا (الملفات الموجودة تُحسب مكتملة)
+    func overallProgress(_ p: ImageProfile) -> Double {
+        let total = Double(max(p.downloadSize, 1))
+        let done = p.files.reduce(0.0) { acc, f in
+            let sz = Double(f.size ?? 0)
+            if isPresent(p, f) { return acc + sz }
+            return acc + sz * (progress[f.id] ?? 0)
+        }
+        return min(1, done / total)
+    }
+    /// آخر رسالة خطأ لملفات النظام إن وُجدت
+    func failure(_ p: ImageProfile) -> String? {
+        p.files.compactMap { status[$0.id] }.first { $0.hasPrefix("فشل") }
+    }
     private lazy var session: URLSession = {
         let cfg = URLSessionConfiguration.default
         cfg.timeoutIntervalForResource = 6 * 3600
@@ -178,6 +199,14 @@ final class ImageStore: NSObject, ObservableObject {
     func download(_ p: ImageProfile, _ f: ImageFile) {
         Task { @MainActor in
             do {
+                if let data = resumeData.removeValue(forKey: f.id) {
+                    let t = session.downloadTask(withResumeData: data)
+                    tasks[t.taskIdentifier] = (p, f)
+                    progress[f.id] = progress[f.id] ?? 0
+                    status[f.id] = "يستأنف التنزيل..."
+                    t.resume()
+                    return
+                }
                 var req: URLRequest
                 if let s = f.url, let u = URL(string: s) {
                     req = URLRequest(url: u)
@@ -202,8 +231,13 @@ final class ImageStore: NSObject, ObservableObject {
         }
     }
 
+    /// إيقاف التنزيل مع حفظ ما نُزِّل لاستئنافه لاحقًا
     func cancelAll() {
-        session.getAllTasks { $0.forEach { $0.cancel() } }
+        session.getAllTasks { all in
+            for t in all {
+                if let d = t as? URLSessionDownloadTask { d.cancel(byProducingResumeData: { _ in }) } else { t.cancel() }
+            }
+        }
     }
 
     func delete(_ p: ImageProfile) {
@@ -234,7 +268,10 @@ final class ImageStore: NSObject, ObservableObject {
         guard let entry = tasks.removeValue(forKey: task) else { return }
         let p = entry.profile, f = entry.file
         progress[f.id] = nil
-        if let error = error { status[f.id] = "فشل: \(error.localizedDescription)"; return }
+        if let error = error {
+            if let data = (error as NSError).userInfo[NSURLSessionDownloadTaskResumeData] as? Data { resumeData[f.id] = data }
+            status[f.id] = "فشل: \(error.localizedDescription)"; return
+        }
         guard let loc = location else { return }
         let dst = localURL(p, f)
         status[f.id] = f.gunzip == true ? "يتحقق ويفك الضغط..." : "يتحقق..."

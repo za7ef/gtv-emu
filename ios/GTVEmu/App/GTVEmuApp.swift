@@ -1,4 +1,4 @@
-// نقطة دخول التطبيق: أربعة تبويبات (الآلة، الطرفية، الصور، الإعدادات) بواجهة عربية من اليمين إلى اليسار.
+// نقطة دخول التطبيق: شاشة رئيسية واحدة، والإعدادات والأدوات المتقدمة من زر الترس، بواجهة عربية من اليمين إلى اليسار.
 import SwiftUI
 
 @main
@@ -9,16 +9,7 @@ struct GTVEmuApp: App {
 
     var body: some Scene {
         WindowGroup {
-            TabView {
-                NavigationStack { MachineView().toolbar(.hidden, for: .navigationBar) }
-                    .tabItem { Label("الآلة", systemImage: "tv") }
-                NavigationStack { ConsoleView().navigationTitle("الطرفية").navigationBarTitleDisplayMode(.inline) }
-                    .tabItem { Label("الطرفية", systemImage: "terminal") }
-                NavigationStack { ImagesView() }
-                    .tabItem { Label("الصور", systemImage: "externaldrive") }
-                NavigationStack { SettingsView() }
-                    .tabItem { Label("الإعدادات", systemImage: "gearshape") }
-            }
+            NavigationStack { MachineView().toolbar(.hidden, for: .navigationBar) }
             .environment(\.layoutDirection, .rightToLeft)
             .preferredColorScheme(.dark)
             .task { await updater.check() }

@@ -70,6 +70,7 @@ const char *gtv_jit_status(void) { return jit_status_buf; }
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
 #include <sys/sysctl.h>
+#include <sys/proc.h>
 extern int csops(int pid, unsigned int ops, void *useraddr, size_t usersize);
 #define CS_DEBUGGED 0x10000000
 
@@ -86,26 +87,86 @@ static int os_major(void) {
     return atoi(b);
 }
 
-/* «استدعاء» بروتوكول StikDebug لـ TXM ‏(iOS 26 وما بعده): يتوقف التنفيذ عند brk #0xf00d،
- * فيقرأ سكربت StikDebug العام (universal.js) رقم الأمر من x16 والوسائط من x0 وx1،
- * ثم يكتب النتيجة في x0 ويتابع. الأمر 1 (PrepareRegion) مع x0 = 0 يحجز منطقة RX
- * بحجم x1 ويهيئها لدى TXM، ويعيد عنوانها. يجب ألا تُنفَّذ إلا والمصحّح مرفق، وإلا انهار التطبيق. */
+/* هل يتتبّع مصحّح العملية الآن فعلًا؟ CS_DEBUGGED يبقى مضبوطًا بعد فصل المصحّح،
+ * فلا يكفي وحده للحكم بأن نقطة التوقف ستُعالَج. */
+static int ptraced_now(void) {
+    struct kinfo_proc kp; size_t n = sizeof kp;
+    int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
+    memset(&kp, 0, sizeof kp);
+    if (sysctl(mib, 4, &kp, &n, NULL, 0) != 0) return 0;
+    return (kp.kp_proc.p_flag & P_TRACED) != 0;
+}
+
+/* «استدعاء» بروتوكول StikDebug لـ TXM ‏(iOS 26 وما بعده)، مطابق لسكربت universal.js الحالي
+ * (آخر تحديث 2026-03-29): يتوقف التنفيذ عند brk #0xf00d، فيقرأ السكربت رقم الأمر من x16
+ * والوسائط من x0 وx1، ويكتب النتيجة في x0، ويتجاوز نقطة التوقف.
+ * الأمر 0 = فصل المصحّح، والأمر 1 = PrepareRegion (مع x0 = 0 يحجز منطقة RX بحجم x1). */
 __attribute__((noinline, naked)) static void *jit26_prepare_region(void *addr, size_t len) {
     __asm__ volatile("mov x16, #1\n"
                      "brk #0xf00d\n"
                      "ret");
 }
+__attribute__((noinline, naked)) static void jit26_detach(void) {
+    __asm__ volatile("mov x16, #0\n"
+                     "brk #0xf00d\n"
+                     "ret");
+}
+
+/* شبكة أمان: إن نُفِّذت نقطة التوقف ولم يعالجها أي مصحّح (سكربت غير مفعّل أو سكربت قديم)
+ * يصل SIGTRAP إلى العملية؛ نتجاوز التعليمة ونعيد 0 بدل أن ينهار التطبيق. */
+#include <signal.h>
+#include <sys/ucontext.h>
+static volatile sig_atomic_t brk_unhandled;
+static void brk_trap(int sig, siginfo_t *si, void *uc_) {
+    (void)sig; (void)si;
+    ucontext_t *uc = (ucontext_t *)uc_;
+    uint32_t insn = *(uint32_t *)(uintptr_t)uc->uc_mcontext->__ss.__pc;
+    if ((insn & 0xFFE0001F) == 0xD4200000 && ((insn >> 5) & 0xFFFF) == 0xF00D) {
+        uc->uc_mcontext->__ss.__pc += 4;
+        uc->uc_mcontext->__ss.__x[0] = 0;
+        brk_unhandled = 1;
+    }
+}
+static void *guarded_call(int detach, size_t len) {
+    struct sigaction sa, old;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_sigaction = brk_trap; sa.sa_flags = SA_SIGINFO;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGTRAP, &sa, &old);
+    brk_unhandled = 0;
+    void *r = NULL;
+    if (detach) jit26_detach(); else r = jit26_prepare_region(NULL, len);
+    sigaction(SIGTRAP, &old, NULL);
+    return brk_unhandled ? NULL : r;
+}
 
 static int jit_alloc_txm(Jit *j) {
-    void *rxp = jit26_prepare_region(NULL, CODE_SIZE);
-    if (!rxp || (uintptr_t)rxp == 0xE0000069) { JIT_STATUS("TXM: لم يُعِد المصحّح منطقة RX (هل السكربت universal.js مفعّل في StikDebug؟)"); return 0; }
+    if (!ptraced_now()) {
+        JIT_STATUS("TXM: المصحّح غير مرفق الآن (فُصل بعد التفعيل). في StikDebug اختر سكربت universal.js لهذا التطبيق");
+        return 0;
+    }
+    void *rxp = guarded_call(0, CODE_SIZE);
+    if (brk_unhandled) {
+        JIT_STATUS("TXM: لم يعالج StikDebug الطلب؛ اختر سكربت universal.js لـ GTV Emu يدويًا ثم أعد التشغيل");
+        return 0;
+    }
+    if (!rxp || (uintptr_t)rxp == 0xE0000069) {
+        guarded_call(1, 0);
+        JIT_STATUS("TXM: لم يُعِد المصحّح منطقة RX (السكربت المرفق ليس universal.js؟)");
+        return 0;
+    }
     vm_address_t rx = (vm_address_t)rxp, rw = 0;
     vm_prot_t cur, max;
-    /* نافذة كتابة تشير إلى الصفحات الفيزيائية نفسها */
     kern_return_t kr = vm_remap(mach_task_self(), &rw, CODE_SIZE, 0, VM_FLAGS_ANYWHERE, mach_task_self(), rx, FALSE,
                                 &cur, &max, VM_INHERIT_NONE);
-    if (kr != KERN_SUCCESS) { JIT_STATUS("TXM: فشل vm_remap ‏(%d)", kr); return 0; }
-    if (mprotect((void *)rw, CODE_SIZE, PROT_READ | PROT_WRITE) != 0) { JIT_STATUS("TXM: فشل mprotect لنافذة الكتابة"); return 0; }
+    if (kr == KERN_SUCCESS && mprotect((void *)rw, CODE_SIZE, PROT_READ | PROT_WRITE) != 0) kr = KERN_PROTECTION_FAILURE;
+    /* المنطقة جاهزة؛ نفصل المصحّح حتى لا تمر إشارات المحاكي عبره ولا تتأثر العملية بانقطاعه */
+    guarded_call(1, 0);
+    if (kr != KERN_SUCCESS) { JIT_STATUS("TXM: فشل تجهيز نافذة الكتابة (%d)", kr); return 0; }
+    /* فحص ذاتي: كتابة ret في نافذة الكتابة وتنفيذها من نافذة التنفيذ */
+    *(volatile uint32_t *)rw = 0xD65F03C0;
+    sys_icache_invalidate((void *)rx, 4);
+    ((void (*)(void))(void *)rx)();
     j->rw = (uint8_t *)rw; j->rx = (uint8_t *)rx;
     JIT_STATUS("مفعّل: مسار TXM عبر StikDebug (iOS %d)", os_major());
     return 1;
@@ -125,11 +186,23 @@ static int jit_alloc_legacy(Jit *j) {
 }
 #endif
 
+/* المنطقة التنفيذية تُحجز مرة واحدة لكل عملية (على TXM لا يمكن طلبها ثانية بعد فصل المصحّح)،
+ * وتُعاد للآلات اللاحقة في الجلسة نفسها. */
+static uint8_t *cached_rw, *cached_rx;
+static char cached_status[200];
+static int jit_alloc_once(Jit *j);
 static int jit_alloc(Jit *j) {
     if (jit_mode == 3) { JIT_STATUS("معطّل من الإعدادات"); return 0; }
+    if (cached_rx) { j->rw = cached_rw; j->rx = cached_rx; JIT_STATUS("%s", cached_status); return 1; }
+    if (!jit_alloc_once(j)) return 0;
+    cached_rw = j->rw; cached_rx = j->rx;
+    snprintf(cached_status, sizeof cached_status, "%s", jit_status_buf);
+    return 1;
+}
+static int jit_alloc_once(Jit *j) {
 #if defined(__APPLE__)
 #if TARGET_OS_IPHONE
-    if (!cs_debugged()) { JIT_STATUS("لا يوجد مصحّح مرفق؛ شغّل التطبيق من StikDebug لتفعيل JIT"); return 0; }
+    if (!cs_debugged()) { JIT_STATUS("غير مفعّل: افتح التطبيق من StikDebug لتفعيل JIT"); return 0; }
     if (jit_mode == 1) return jit_alloc_txm(j);
     if (jit_mode == 2) return jit_alloc_legacy(j);
     /* تلقائي: TXM في iOS 26 فما فوق، ثم المسار القديم */

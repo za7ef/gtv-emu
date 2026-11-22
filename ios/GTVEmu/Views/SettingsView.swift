@@ -1,4 +1,4 @@
-// الإعدادات: الذاكرة وعدد المعالجات ووضع المترجم الفوري ومصدر الصور.
+// الإعدادات: حالة JIT، وخلف «الخيارات المتقدمة»: الذاكرة والمعالجات ووضع JIT ومصدر الصور والطرفية وإدارة الملفات.
 import SwiftUI
 
 struct SettingsView: View {
@@ -14,8 +14,22 @@ struct SettingsView: View {
 
     private var physicalGB: Double { Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824 }
 
+    @Environment(\.dismiss) private var dismiss
+    @State private var showAdvanced = false
+
     var body: some View {
         Form {
+            Section {
+                LabeledContent("حالة JIT", value: engine.jitStatus.isEmpty ? "تُفحص عند التشغيل" : engine.jitStatus)
+            } header: { Text("السرعة") } footer: {
+                Text("لتسريع المحاكاة على iOS 26: افتح التطبيق من StikDebug، واختر له سكربت universal.js يدويًا من قائمة السكربتات. بدونه يعمل التطبيق أبطأ، لكنه يعمل.")
+            }
+
+            Section {
+                Toggle("إظهار الخيارات المتقدمة", isOn: $showAdvanced.animation())
+            }
+
+            if showAdvanced {
             Section {
                 Stepper(value: $ramMB, in: 256...6144, step: 256) {
                     LabeledContent("ذاكرة الضيف", value: "\(ramMB) ميغابايت")
@@ -47,6 +61,16 @@ struct SettingsView: View {
                 Text("تُقرأ قائمة الصور من ملف manifest.json في إصدار المستودع. رمز الوصول مطلوب فقط عند استخدام مستودع خاص.")
             }
 
+            Section("أدوات") {
+                NavigationLink { ConsoleView().navigationTitle("الطرفية").navigationBarTitleDisplayMode(.inline) } label: {
+                    Label("الطرفية", systemImage: "terminal")
+                }
+                NavigationLink { ImagesView() } label: {
+                    Label("إدارة ملفات الأنظمة", systemImage: "externaldrive")
+                }
+            }
+            }
+
             Section("حول") {
                 NavigationLink {
                     AboutView()
@@ -57,5 +81,6 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("الإعدادات")
+        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("تم") { dismiss() } } }
     }
 }

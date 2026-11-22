@@ -94,12 +94,14 @@ def ent(role, name, asset=None, gunzip=False, size=None):
     return e
 profiles = [{
     "id": "alpine-test", "name": "Alpine Linux (اختبار)", "kind": "linux",
+    "note": "نظام خفيف لاختبار الشاشة والريموت والصوت",
     "description": "نواة Alpine linux-virt مع busybox ووحدات virtio وaplay. تقلع إلى صدفة على الطرفية خلال ثوانٍ مع JIT، وتختبر الشاشة واللمس والريموت والصوت.",
     "ramMB": 512, "cores": 2,
     "files": [ent("kernel", "alpine-Image.gz"), ent("initrd", "alpine-initrd.gz")]}]
 if sys.argv[1] == "1":
     profiles.append({
-        "id": "android-gtv", "name": "أندرويد (GKI 6.1 + Cuttlefish 16)", "kind": "android",
+        "id": "android-gtv", "name": "Android TV", "kind": "android",
+        "experimental": True, "note": "تجريبي: أندرويد أساسي يتوقف عند شعار الإقلاع، وواجهة التلفاز لم تكتمل بعد",
         "description": "نواة GKI الرسمية مع vendor_boot خاص وصورة نظام مصغّرة. تصل إلى شاشة الإقلاع؛ تحتاج JIT ووقتًا طويلًا.",
         "ramMB": 1024, "cores": 2,
         "files": [ent("boot", "android-boot.img"), ent("vendor_boot", "android-vendor_boot.img"), ent("init_boot", "android-init_boot.img"),

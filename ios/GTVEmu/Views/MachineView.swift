@@ -1,4 +1,4 @@
-// شاشة الآلة: اختيار ملف التعريف، والتشغيل والإيقاف، وعرض الشاشة مع الريموت وشريط الحالة.
+// الشاشة الرئيسية: اختيار النظام، وتنزيله بضغطة، ثم التشغيل بزر واحد. أثناء التشغيل تُعرض الشاشة مع الريموت.
 import SwiftUI
 
 struct MachineView: View {
@@ -11,11 +11,133 @@ struct MachineView: View {
     @AppStorage("profileID") private var profileID = "alpine-test"
     @State private var showRemote = true
     @State private var showConsoleOverlay = false
+    @State private var showSettings = false
 
     private var profiles: [ImageProfile] { store.manifest?.profiles ?? [] }
     private var profile: ImageProfile? { profiles.first { $0.id == profileID } ?? profiles.first }
 
     var body: some View {
+        Group {
+            if engine.isRunning { running } else { home }
+        }
+        .sheet(isPresented: $showSettings) {
+            NavigationStack { SettingsView() }
+                .environment(\.layoutDirection, .rightToLeft)
+                .preferredColorScheme(.dark)
+        }
+        .task { if store.manifest == nil { await store.refreshManifest() } }
+    }
+
+    // MARK: - الشاشة الرئيسية (قبل التشغيل)
+
+    private var home: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack {
+                    Text("GTV Emu").font(.largeTitle.bold())
+                    Spacer()
+                    Button { showSettings = true } label: {
+                        Image(systemName: "gearshape.fill").font(.title2)
+                    }
+                    .accessibilityLabel("الإعدادات")
+                }
+
+                Text("اختر النظام").font(.headline).foregroundColor(.secondary)
+                if profiles.isEmpty {
+                    if let err = store.lastError {
+                        Label(err, systemImage: "wifi.exclamationmark").foregroundColor(.orange)
+                    } else {
+                        ProgressView("جارٍ جلب قائمة الأنظمة...")
+                    }
+                    Button("إعادة المحاولة") { Task { await store.refreshManifest() } }
+                } else {
+                    ForEach(profiles) { p in systemCard(p) }
+                }
+
+                if let p = profile { mainButton(p) }
+                statusLine
+                if case .stopped(let why) = engine.state {
+                    Text(why).font(.footnote).foregroundColor(.secondary)
+                }
+            }
+            .padding()
+        }
+        .background(Color.black.ignoresSafeArea())
+    }
+
+    private func systemCard(_ p: ImageProfile) -> some View {
+        let selected = p.id == profile?.id
+        return Button { profileID = p.id } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: p.kind == "android" ? "tv" : "terminal")
+                    .font(.title2).frame(width: 36)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(p.name).font(.headline)
+                        if p.experimental == true {
+                            Text("تجريبي").font(.caption2.bold())
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Capsule().fill(Color.orange.opacity(0.25)))
+                                .foregroundColor(.orange)
+                        }
+                    }
+                    if let n = p.note { Text(n).font(.caption).foregroundColor(p.experimental == true ? .orange : .secondary) }
+                    Text(stateText(p)).font(.caption).foregroundColor(.secondary)
+                    if store.isDownloading(p) { ProgressView(value: store.overallProgress(p)) }
+                }
+                Spacer()
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .foregroundColor(selected ? .green : .secondary)
+            }
+            .padding()
+            .background(RoundedRectangle(cornerRadius: 16).fill(Color.white.opacity(selected ? 0.12 : 0.06)))
+        }
+        .buttonStyle(.plain)
+        .disabled(engine.isRunning)
+    }
+
+    private func stateText(_ p: ImageProfile) -> String {
+        let size = ByteCountFormatter.string(fromByteCount: p.downloadSize, countStyle: .file)
+        if store.isReady(p) { return "جاهز للتشغيل" }
+        if store.isDownloading(p) { return String(format: "جاري التنزيل %.0f٪ من %@", store.overallProgress(p) * 100, size) }
+        if let f = store.failure(p) { return f + " (اضغط تنزيل للاستئناف)" }
+        return "يحتاج تنزيل \(size)"
+    }
+
+    @ViewBuilder
+    private func mainButton(_ p: ImageProfile) -> some View {
+        if store.isReady(p) {
+            Button { boot() } label: {
+                Label("تشغيل", systemImage: "play.fill").font(.title2.bold()).frame(maxWidth: .infinity).padding(.vertical, 8)
+            }
+            .buttonStyle(.borderedProminent).tint(.green)
+        } else if store.isDownloading(p) {
+            Button(role: .cancel) { store.cancelAll() } label: {
+                Label("إيقاف التنزيل مؤقتًا", systemImage: "pause.fill").frame(maxWidth: .infinity).padding(.vertical, 8)
+            }
+            .buttonStyle(.bordered)
+        } else {
+            Button { store.download(p) } label: {
+                Label(p.kind == "android" ? "تنزيل نظام Android TV" : "تنزيل \(p.name)", systemImage: "arrow.down.circle.fill")
+                    .font(.title3.bold()).frame(maxWidth: .infinity).padding(.vertical, 8)
+            }
+            .buttonStyle(.borderedProminent)
+        }
+    }
+
+    /// سطر حالة واضح للمترجم الفوري
+    private var statusLine: some View {
+        let s = engine.jitStatus
+        let on = s.hasPrefix("مفعّل")
+        return Label(on ? "JIT مفعّل" : "JIT غير مفعّل: " + (s.isEmpty ? "يُفحص عند التشغيل" : s),
+                     systemImage: on ? "bolt.fill" : "tortoise.fill")
+            .font(.footnote)
+            .foregroundColor(on ? .yellow : .secondary)
+    }
+
+    // MARK: - أثناء التشغيل
+
+    private var running: some View {
         GeometryReader { geo in
             let landscape = geo.size.width > geo.size.height
             ZStack {
@@ -34,49 +156,28 @@ struct MachineView: View {
                 }
             }
         }
-        .safeAreaInset(edge: .top) { controls }
+        .safeAreaInset(edge: .top) { runControls }
     }
 
     private var screen: some View {
         ZStack(alignment: .bottomLeading) {
             DisplayView()
-            if showConsoleOverlay {
-                ConsoleTail().allowsHitTesting(false)
-            }
-            if engine.state == .idle {
-                Text(profile.map { store.isReady($0) ? "اضغط تشغيل لبدء \($0.name)" : "نزّل صور \($0.name) من تبويب الصور أولًا" } ?? "لا توجد ملفات تعريف")
-                    .foregroundColor(.white.opacity(0.7)).padding()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+            if showConsoleOverlay { ConsoleTail().allowsHitTesting(false) }
         }
     }
 
-    private var controls: some View {
-        HStack(spacing: 10) {
-            Menu {
-                ForEach(profiles) { p in
-                    Button { profileID = p.id } label: {
-                        Label(p.name, systemImage: store.isReady(p) ? "checkmark.circle" : "arrow.down.circle")
-                    }
-                }
-            } label: {
-                Label(profile?.name ?? "ملف التعريف", systemImage: "shippingbox").lineLimit(1)
-            }
-            .disabled(engine.isRunning)
+    private var runControls: some View {
+        HStack(spacing: 14) {
+            Text(profile?.name ?? "").font(.subheadline.bold()).lineLimit(1)
             Spacer()
-            if engine.isRunning {
-                Text(String(format: "%.0f م ت/ث", engine.mips)).font(.caption.monospacedDigit())
-                Image(systemName: engine.jitActive ? "bolt.fill" : "tortoise.fill")
-                    .foregroundColor(engine.jitActive ? .yellow : .secondary)
-            }
-            Button { showConsoleOverlay.toggle() } label: { Image(systemName: "terminal") }
+            Image(systemName: engine.jitActive ? "bolt.fill" : "tortoise.fill")
+                .foregroundColor(engine.jitActive ? .yellow : .secondary)
             Button { showRemote.toggle() } label: { Image(systemName: "appletvremote.gen4") }
-            if engine.isRunning {
-                Button(role: .destructive) { engine.stop() } label: { Image(systemName: "stop.fill") }
-            } else {
-                Button { boot() } label: { Image(systemName: "play.fill") }
-                    .disabled(profile.map { !store.isReady($0) } ?? true)
-            }
+            Menu {
+                Toggle(isOn: $showConsoleOverlay) { Label("إظهار سجل الإقلاع", systemImage: "terminal") }
+                Text(String(format: "السرعة: %.0f مليون تعليمة/ث", engine.mips))
+            } label: { Image(systemName: "ellipsis.circle") }
+            Button(role: .destructive) { engine.stop() } label: { Image(systemName: "stop.fill") }
         }
         .padding(.horizontal).padding(.vertical, 8)
         .background(.bar)
