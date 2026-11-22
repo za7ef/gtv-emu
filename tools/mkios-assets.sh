@@ -9,6 +9,7 @@ OUT=$(mkdir -p "${1:-assets}" && cd "${1:-assets}" && pwd)
 ANDROID=0; TV=1
 for a in "$2" "$3"; do [ "$a" = "--android" ] && ANDROID=1; [ "$a" = "--no-tv" ] && TV=0; done
 # ملف تعريف Android TV (يُبنى افتراضيًا، ويُتخطى بـ --no-tv). صورة Google لا تُنشر؛ التطبيق ينزّلها من dl.google.com ويجهّزها على الجهاز.
+# ‏hardwareegl=angle لازم: init.ranchu.rc في صورة Google يضبط منه ro.hardware.egl (الافتراضي emulation يُسقط SurfaceFlinger).
 # المنشور هنا: نواة GKI (GPL) وvendor_boot ووحدات virtio، وinit_boot من AOSP Cuttlefish، وقرص التجهيز
 # الأولي (Alpine + e2fsprogs + مكوّنات رسوميات Cuttlefish بترخيص Apache 2.0).
 # المكوّنات تُنزَّل من فرع tv-cf-parts في المستودع، أو من مجلد محلي في CF_PARTS.
@@ -84,7 +85,7 @@ fi
 
 if [ $TV = 1 ]; then
   sh "$ROOT/android/scripts/fetch-gki.sh" "$WORK/gki"
-  (cd "$WORK/gki" && HW=ranchu FSTAB_FILE="$ROOT/android/tv/fstab.gtv" sh "$ROOT/android/scripts/mkvendorboot.sh" . && cp vb.img "$OUT/tv-vendor_boot.img")
+  (cd "$WORK/gki" && HW=ranchu FSTAB_FILE="$ROOT/android/tv/fstab.gtv" sh "$ROOT/android/scripts/mkvendorboot.sh" . hardwareegl=angle && cp vb.img "$OUT/tv-vendor_boot.img")
   cp "$WORK/gki/boot-6.1-gz.img" "$OUT/tv-boot.img"
   cp "$WORK/gki/init_boot.img" "$OUT/tv-init_boot.img"
   if [ -z "$CF_PARTS" ]; then
