@@ -5,6 +5,7 @@
       "id": "alpine-test",
       "name": "Alpine Linux (اختبار)",
       "kind": "linux",
+      "note": "نظام خفيف لاختبار الشاشة والريموت والصوت",
       "description": "نواة Alpine linux-virt مع busybox ووحدات virtio وaplay. تقلع إلى صدفة على الطرفية خلال ثوانٍ مع JIT، وتختبر الشاشة واللمس والريموت والصوت.",
       "ramMB": 512,
       "cores": 2,
@@ -12,40 +13,72 @@
         {
           "role": "kernel",
           "name": "alpine-Image.gz",
+          "sha256": "a0ef37c8cf80a0f8b2997dd244fbf525cdec47f11b60f0597b6c34688e0f9863",
           "size": 9577960
         },
         {
           "role": "initrd",
           "name": "alpine-initrd.gz",
+          "sha256": "81c084482a29c6f86887a400e70c5519bfc82447f65ab8217d49e6512a63f7f8",
           "size": 2458621
         }
       ]
     },
     {
-      "id": "android-gtv",
-      "name": "أندرويد (GKI 6.1 + Cuttlefish 16)",
+      "id": "android-tv",
+      "name": "Android TV 16",
       "kind": "android",
-      "description": "نواة GKI الرسمية مع vendor_boot خاص وصورة نظام مصغّرة. تصل إلى شاشة الإقلاع؛ تحتاج JIT ووقتًا طويلًا.",
-      "ramMB": 1024,
+      "experimental": true,
+      "note": "تجريبي: يصل إلى شعار الإقلاع، وواجهة التلفاز لم تكتمل بعد",
+      "description": "نظام Android TV 16 الرسمي من Google (API 36). يُنزَّل من خوادم Google مباشرة، ثم يُجهَّز على الجهاز: استخراج الأقسام وإضافة مكدّس رسوميات برمجي من AOSP. يحتاج JIT ونحو 3 غيغابايت من المساحة.",
+      "notice": "صورة النظام مملوكة لشركة Google وتخضع لترخيص Android SDK. تُنزَّل من dl.google.com إلى جهازك مباشرة، ولا يعيد هذا التطبيق توزيعها.",
+      "ramMB": 1536,
       "cores": 2,
       "files": [
         {
+          "role": "source",
+          "name": "android-tv-36_r04.zip",
+          "url": "https://dl.google.com/android/repository/sys-img/android-tv/arm64-v8a-36_r04.zip",
+          "size": 970375839,
+          "sha256": "7398e2f00e5df28332027d5a131fcbefb8d5823bc7103a65a035575d271ffcca",
+          "transient": true
+        },
+        {
           "role": "boot",
-          "name": "android-boot.img"
+          "name": "tv-boot.img",
+          "sha256": "37b9bc5d916e516416c4cd0877aaa2894d8d51f4cbe6d2e1691f64ab503fc990",
+          "size": 47185920
         },
         {
           "role": "vendor_boot",
-          "name": "android-vendor_boot.img"
+          "name": "tv-vendor_boot.img",
+          "sha256": "8f8fc1491cd46bc8cdab6de84119da9a5bf55083f83de55cc858b84a8a6bf9d1",
+          "size": 2736128
         },
         {
           "role": "init_boot",
-          "name": "android-init_boot.img"
+          "name": "tv-init_boot.img",
+          "sha256": "c4f820039ef9c2d1957461f33916f4d24b94d7b866e03ff91dbd7e9f72793d29",
+          "size": 8388608
+        },
+        {
+          "role": "prep_kernel",
+          "name": "prep-Image.gz",
+          "sha256": "a0ef37c8cf80a0f8b2997dd244fbf525cdec47f11b60f0597b6c34688e0f9863",
+          "size": 9577960,
+          "asset": "alpine-Image.gz"
+        },
+        {
+          "role": "prep_initrd",
+          "name": "tv-prep-initrd.gz",
+          "sha256": "d6cc7bc735fa88d859fa7e8728396880453498f338796bc6fe8dc120ce75bd1a",
+          "size": 23501566
         },
         {
           "role": "disk",
-          "name": "android-system.img",
-          "asset": "android-system.img.gz",
-          "gunzip": true
+          "name": "tvdisk.img",
+          "generated": true,
+          "size": 5247074304
         }
       ]
     }

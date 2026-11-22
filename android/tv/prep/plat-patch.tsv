@@ -1,0 +1,833 @@
+6329	(typepermissive aconfigd)
+6334	(typepermissive aconfigd_mainline)
+6339	(typepermissive adbd)
+6344	(typepermissive adbd_tradeinmode)
+6349	(typepermissive aidl_lazy_test_server)
+6354	(typepermissive apex_test_prepostinstall)
+6359	(typepermissive apexd)
+6364	(typepermissive apexd_derive_classpath)
+6369	(typepermissive app_zygote)(typepermissive art_boot)
+6374	(typepermissive art_exec)(typepermissive artd)
+6379	(typepermissive atrace)(typepermissive audioserver)
+6384	(typepermissive auditctl)
+6389	(typepermissive automotive_display_service)
+6394	(typepermissive bert_collector)
+6399	(typepermissive blank_screen)(typepermissive blkid)
+6404	(typepermissive blkid_untrusted)
+6409	(typepermissive bluetooth)(typepermissive bootanim)
+6414	(typepermissive bootstat)
+6419	(typepermissive boringssl_self_test)
+6424	(typepermissive bpfloader)
+6429	(typepermissive bt_vhci_forwarder)
+6434	(typepermissive bufferhubd)
+6439	(typepermissive cameraserver)
+6444	(typepermissive canhalconfigurator)
+6449	(typepermissive charger)
+6454	(typepermissive charger_vendor)(typepermissive clatd)
+6459	(typepermissive compos_fd_server)
+6464	(typepermissive compos_verify)
+6469	(typepermissive composd)(typepermissive cppreopts)
+6474	(typepermissive crash_dump)(typepermissive credstore)
+6479	(typepermissive crosvm)
+6484	(typepermissive derive_classpath)
+6489	(typepermissive derive_sdk)
+6494	(typepermissive device_as_webcam)
+6499	(typepermissive dex2oat)
+6504	(typepermissive dexopt_chroot_setup)
+6509	(typepermissive dhcp)(typepermissive dlkm_loader)
+6514	(typepermissive dmesgd)(typepermissive dnsmasq)
+6519	(typepermissive drmserver)(typepermissive dumpstate)
+6524	(typepermissive e2fs)(typepermissive early_virtmgr)
+6529	(typepermissive ephemeral_app)
+6534	(typepermissive evsmanagerd)
+6539	(typepermissive extra_free_kbytes)
+6544	(typepermissive fastbootd)
+6549	(typepermissive fingerprintd)
+6554	(typepermissive flags_health_check)
+6559	(typepermissive fsck)(typepermissive fsck_untrusted)
+6564	(typepermissive fuseblkd)
+6569	(typepermissive fuseblkd_untrusted)
+6574	(typepermissive fwk_bufferhub)
+6579	(typepermissive gatekeeperd)
+6584	(typepermissive gki_apex_prepostinstall)
+6589	(typepermissive gmscore_app)
+6594	(typepermissive goldfish_ip)
+6599	(typepermissive goldfish_setup)
+6604	(typepermissive goldfish_system_setup)
+6609	(typepermissive gpuservice)(typepermissive gsid)
+6614	(typepermissive hal_allocator_default)
+6619	(typepermissive hal_atrace_default)
+6624	(typepermissive hal_audio_default)
+6629	(typepermissive hal_audiocontrol_default)
+6634	(typepermissive hal_authgraph_default)
+6639	(typepermissive hal_authsecret_default)
+6644	(typepermissive hal_bluetooth_btlinux)
+6649	(typepermissive hal_bluetooth_default)
+6654	(typepermissive hal_bootctl_default)
+6659	(typepermissive hal_broadcastradio_default)
+6664	(typepermissive hal_camera_default)
+6669	(typepermissive hal_can_socketcan)
+6674	(typepermissive hal_cas_default)
+6679	(typepermissive hal_configstore_default)
+6684	(typepermissive hal_confirmationui_default)
+6689	(typepermissive hal_contexthub_default)
+6694	(typepermissive hal_drm_clearkey)
+6699	(typepermissive hal_drm_clearkey_aidl)
+6704	(typepermissive hal_drm_default)
+6709	(typepermissive hal_drm_widevine)
+6714	(typepermissive hal_dumpstate_default)
+6719	(typepermissive hal_evs_default)
+6724	(typepermissive hal_face_default)
+6729	(typepermissive hal_fastboot_default)
+6734	(typepermissive hal_fingerprint_default)
+6739	(typepermissive hal_gatekeeper_default)
+6744	(typepermissive hal_gnss_default)
+6749	(typepermissive hal_graphics_allocator_default)
+6754	(typepermissive hal_graphics_composer_default)
+6759	(typepermissive hal_health_default)
+6764	(typepermissive hal_health_storage_default)
+6769	(typepermissive hal_hwcrypto_default)
+6774	(typepermissive hal_identity_default)
+6779	(typepermissive hal_input_classifier_default)
+6784	(typepermissive hal_input_processor_default)
+6789	(typepermissive hal_ir_default)
+6794	(typepermissive hal_ivn_default)
+6799	(typepermissive hal_keymaster_default)
+6804	(typepermissive hal_keymint_default)
+6809	(typepermissive hal_keymint_system)
+6814	(typepermissive hal_light_default)
+6819	(typepermissive hal_lowpan_default)
+6824	(typepermissive hal_macsec_default)
+6829	(typepermissive hal_mediaquality_default)
+6834	(typepermissive hal_memtrack_default)
+6839	(typepermissive hal_neuralnetworks_sample)
+6844	(typepermissive hal_nfc_default)
+6849	(typepermissive hal_oemlock_default)
+6854	(typepermissive hal_power_default)
+6859	(typepermissive hal_power_stats_default)
+6864	(typepermissive hal_radio_config_default)
+6869	(typepermissive hal_radio_default)
+6874	(typepermissive hal_rebootescrow_default)
+6879	(typepermissive hal_remoteaccess_default)
+6884	(typepermissive hal_secretkeeper_default)
+6889	(typepermissive hal_secure_element_default)
+6894	(typepermissive hal_sensors_default)
+6899	(typepermissive hal_tetheroffload_default)
+6904	(typepermissive hal_thermal_default)
+6909	(typepermissive hal_threadnetwork_default)
+6914	(typepermissive hal_tv_cec_default)
+6919	(typepermissive hal_tv_hdmi_cec_default)
+6924	(typepermissive hal_tv_hdmi_connection_default)
+6929	(typepermissive hal_tv_hdmi_earc_default)
+6934	(typepermissive hal_tv_input_default)
+6939	(typepermissive hal_tv_tuner_default)
+6944	(typepermissive hal_usb_default)
+6949	(typepermissive hal_usb_gadget_default)
+6954	(typepermissive hal_uwb_default)
+6959	(typepermissive hal_vehicle_default)
+6964	(typepermissive hal_vibrator_default)
+6969	(typepermissive hal_vm_capabilities_default)
+6974	(typepermissive hal_vr_default)
+6979	(typepermissive hal_weaver_default)
+6984	(typepermissive hal_widevine_system)
+6989	(typepermissive hal_wifi_default)
+6994	(typepermissive hal_wifi_hostapd_default)
+6999	(typepermissive hal_wifi_supplicant_default)
+7004	(typepermissive healthd)(typepermissive heapprofd)
+7009	(typepermissive hidl_lazy_test_server)
+7014	(typepermissive hwservicemanager)
+7019	(typepermissive idmap)(typepermissive incident)
+7024	(typepermissive incident_helper)
+7029	(typepermissive incidentd)(typepermissive init)
+7034	(typepermissive init_ranchu_device_state)
+7039	(typepermissive inputflinger)(typepermissive installd)
+7044	(typepermissive isolated_app)
+7049	(typepermissive isolated_compute_app)
+7054	(typepermissive iw)(typepermissive kcmdlinectrl)
+7059	(typepermissive kernel)(typepermissive keystore)
+7064	(typepermissive linkerconfig)
+7069	(typepermissive linux_vm_setup)(typepermissive llkd)
+7074	(typepermissive lmkd)(typepermissive logd)
+7079	(typepermissive logpersist)(typepermissive lpdumpd)
+7084	(typepermissive mac80211_create_radios)
+7089	(typepermissive mdnsd)(typepermissive mediacodec)
+7094	(typepermissive mediadrmserver)
+7099	(typepermissive mediaextractor)
+7104	(typepermissive mediametrics)
+7109	(typepermissive mediaprovider)
+7114	(typepermissive mediaprovider_app)
+7119	(typepermissive mediaserver)
+7124	(typepermissive mediaswcodec)
+7129	(typepermissive mediatranscoding)
+7134	(typepermissive mediatuner)
+7139	(typepermissive memcgv2_activation_depth)
+7144	(typepermissive migrate_legacy_obb_data)
+7149	(typepermissive misctrl)(typepermissive mm_events)
+7154	(typepermissive mmd)(typepermissive modprobe)
+7159	(typepermissive mtectrl)(typepermissive mtp)
+7164	(typepermissive netd)(typepermissive netutils_wrapper)
+7169	(typepermissive network_stack)(typepermissive nfc)
+7174	(typepermissive odrefresh)(typepermissive odsign)
+7179	(typepermissive ot_ctl)(typepermissive ot_daemon)
+7184	(typepermissive ot_rcp)
+7189	(typepermissive otapreopt_chroot)
+7194	(typepermissive otapreopt_slot)
+7199	(typepermissive overlay_remounter)
+7204	(typepermissive perfetto)(typepermissive performanced)
+7209	(typepermissive permissioncontroller_app)
+7214	(typepermissive platform_app)
+7219	(typepermissive postinstall)
+7224	(typepermissive postinstall_dexopt)
+7229	(typepermissive ppp)(typepermissive prefetch)
+7234	(typepermissive preloads_copy)
+7239	(typepermissive preopt2cachename)
+7244	(typepermissive priv_app)(typepermissive prng_seeder)
+7249	(typepermissive profcollectd)(typepermissive profman)
+7254	(typepermissive qemu_props)(typepermissive radio)
+7259	(typepermissive recovery)
+7264	(typepermissive recovery_persist)
+7269	(typepermissive recovery_refresh)
+7274	(typepermissive remount)(typepermissive rild)
+7279	(typepermissive rkp_cert_processor)
+7284	(typepermissive rkpd)(typepermissive rkpdapp)
+7289	(typepermissive rs)(typepermissive rss_hwm_reset)
+7294	(typepermissive runas)(typepermissive runas_app)
+7299	(typepermissive sdcardd)
+7304	(typepermissive sdk_sandbox_34)
+7309	(typepermissive sdk_sandbox_audit)
+7314	(typepermissive sdk_sandbox_next)
+7319	(typepermissive secure_element)
+7324	(typepermissive servicemanager)(typepermissive sgdisk)
+7329	(typepermissive shared_relro)(typepermissive shell)
+7334	(typepermissive simpleperf)
+7339	(typepermissive simpleperf_app_runner)
+7344	(typepermissive simpleperf_boot)
+7349	(typepermissive slideshow)(typepermissive snapshotctl)
+7354	(typepermissive snapuserd)(typepermissive stats)
+7359	(typepermissive statsd)(typepermissive storaged)
+7364	(typepermissive su)(typepermissive surfaceflinger)
+7369	(typepermissive system_app)
+7374	(typepermissive system_server)
+7379	(typepermissive system_server_startup)
+7384	(typepermissive system_suspend)(typepermissive tee)
+7389	(typepermissive tombstoned)(typepermissive toolbox)
+7394	(typepermissive trace_redactor)(typepermissive traced)
+7399	(typepermissive traced_perf)
+7404	(typepermissive traced_probes)
+7409	(typepermissive traceur_app)
+7414	(typepermissive tradeinmode)(typepermissive ueventd)
+7419	(typepermissive uncrypt)(typepermissive untrusted_app)
+7424	(typepermissive untrusted_app_25)
+7429	(typepermissive untrusted_app_27)
+7434	(typepermissive untrusted_app_29)
+7439	(typepermissive untrusted_app_30)
+7444	(typepermissive untrusted_app_32)
+7449	(typepermissive update_engine)
+7454	(typepermissive update_verifier)
+7459	(typepermissive uprobestats)(typepermissive usbd)
+7464	(typepermissive vdc)
+7469	(typepermissive vehicle_binding_util)
+7474	(typepermissive vendor_boringssl_self_test)
+7479	(typepermissive vendor_init)
+7484	(typepermissive vendor_install_recovery)(typepermissive vendor_misc_writer)(typepermissive vendor_modprobe)(typepermissive vendor_shell)(typepermissive vfio_handler)
+7489	(typepermissive virtual_camera)(typepermissive virtual_face)(typepermissive virtual_fingerprint)(typepermissive virtual_touchpad)(typepermissive virtualizationmanager)
+7494	(typepermissive virtualizationservice)(typepermissive vmlauncher_app)(typepermissive vmnic)(typepermissive vndservicemanager)(typepermissive vold)(typepermissive vold_prepare_subdirs)(typepermissive vzwomatrigger_app)
+7499	(typepermissive wait_for_keymaster)(typepermissive watchdogd)(typepermissive webview_zygote)(typepermissive wifi_mainline_supplicant)(typepermissive wificond)(typepermissive wpa_supplicant_macsec)
+7504	(typepermissive zygote)
+7509	
+7514	
+7519	
+7524	
+7529	
+7534	
+7539	
+7544	
+7549	
+7554	
+7559	
+7564	
+7569	
+7574	
+7579	
+7584	
+7589	
+7594	
+7599	
+7604	
+7609	
+7614	
+7619	
+7624	
+7629	
+7634	
+7639	
+7644	
+7649	
+7654	
+7659	
+7664	
+7669	
+7674	
+7679	
+7684	
+7689	
+7694	
+7699	
+7704	
+7709	
+7714	
+7719	
+7724	
+7729	
+7734	
+7739	
+7744	
+7749	
+7754	
+7759	
+7764	
+7769	
+7774	
+7779	
+7784	
+7789	
+7794	
+7799	
+7804	
+7809	
+7814	
+7819	
+7824	
+7829	
+7834	
+7839	
+7844	
+7849	
+7854	
+7859	
+7864	
+7869	
+7874	
+7879	
+7884	
+7889	
+7894	
+7899	
+7904	
+7909	
+7914	
+7919	
+7924	
+7929	
+7934	
+7939	
+7944	
+7949	
+7954	
+7959	
+7964	
+7969	
+7974	
+7979	
+7984	
+7989	
+7994	
+7999	
+8004	
+8009	
+8014	
+8019	
+8024	
+8029	
+8034	
+8039	
+8044	
+8049	
+8054	
+8063	
+8072	
+8081	
+8090	
+8099	
+8108	
+8117	
+8126	
+8135	
+8144	
+8153	
+8162	
+8171	
+8180	
+8189	
+8198	
+8207	
+8216	
+8225	
+8234	
+8243	
+8252	
+8261	
+8270	
+8279	
+8288	
+8297	
+8306	
+8315	
+8324	
+8333	
+8342	
+8351	
+8360	
+8369	
+8378	
+8387	
+8396	
+8405	
+8414	
+8423	
+8432	
+8441	
+8450	
+8459	
+8468	
+8477	
+8486	
+8495	
+8504	
+8513	
+8522	
+8531	
+8540	
+8549	
+8558	
+8567	
+8576	
+8585	
+8594	
+8603	
+8612	
+8621	
+8630	
+8639	
+8648	
+8657	
+8666	
+8675	
+8684	
+8693	
+8702	
+8711	
+8720	
+8729	
+8734	
+8739	
+8744	
+8749	
+8754	
+8759	
+8764	
+8769	
+8791	
+8796	
+8801	
+8806	
+8811	
+8816	
+8836	
+8841	
+8977	
+8982	
+8987	
+8992	
+9043	
+9126	
+9166	
+9171	
+9176	
+9181	
+9186	
+9191	
+9196	
+9201	
+9206	
+9211	
+9216	
+9221	
+9226	
+9231	
+9236	
+9241	
+9517	
+9518	
+9519	
+9520	
+9525	
+9530	
+9531	
+9532	
+9537	
+9542	
+9547	
+9552	
+9553	
+9554	
+9555	
+9556	
+9561	
+9566	
+9571	
+9576	
+9581	
+9586	
+9591	
+9596	
+9601	
+9606	
+9607	
+9608	
+9609	
+9610	
+9611	
+9612	
+9617	
+9618	
+9619	
+9620	
+9621	
+9622	
+9623	
+9628	
+9633	
+9634	
+9635	
+9636	
+9637	
+9638	
+9639	
+9644	
+9645	
+9646	
+9647	
+9648	
+9649	
+9650	
+9655	
+9656	
+9657	
+9658	
+9659	
+9660	
+9661	
+9666	
+9667	
+9668	
+9669	
+9670	
+9671	
+9672	
+9677	
+9678	
+9679	
+9680	
+9681	
+9682	
+9683	
+9688	
+9689	
+9690	
+9691	
+9692	
+9693	
+9694	
+9699	
+9700	
+9701	
+9702	
+9703	
+9704	
+9705	
+9710	
+9711	
+9712	
+9713	
+9714	
+9715	
+9716	
+9721	
+9722	
+9723	
+9724	
+9725	
+9726	
+9727	
+9732	
+9733	
+9734	
+9735	
+9736	
+9737	
+9738	
+9743	
+9744	
+9745	
+9746	
+9747	
+9748	
+9749	
+9754	
+9755	
+9756	
+9757	
+9758	
+9759	
+9760	
+9765	
+9766	
+9767	
+9768	
+9769	
+9770	
+9771	
+9776	
+9777	
+9778	
+9779	
+9780	
+9781	
+9782	
+9787	
+9788	
+9789	
+9790	
+9791	
+9792	
+9793	
+9798	
+9799	
+9800	
+9801	
+9802	
+9803	
+9804	
+9809	
+9810	
+9811	
+9812	
+9813	
+9814	
+9815	
+9820	
+9821	
+9822	
+9823	
+9824	
+9825	
+9826	
+9831	
+9836	
+9841	
+9846	
+9851	
+9852	
+9853	
+9854	
+9855	
+9856	
+9857	
+9862	
+9867	
+9868	
+9869	
+9870	
+9883	
+9888	
+9893	
+9898	
+9903	
+9908	
+9913	
+9918	
+9919	
+9920	
+9921	
+9922	
+9923	
+9924	
+9929	
+9930	
+9931	
+9932	
+9933	
+9938	
+9943	
+9948	
+9953	
+9958	
+9963	
+9968	
+9974	
+9979	
+9984	
+9985	
+9986	
+9987	
+9988	
+9989	
+9990	
+9991	
+9992	
+9993	
+9994	
+9995	
+10000	
+10001	
+10002	
+10003	
+10004	
+10005	
+10006	
+10007	
+10008	
+10009	
+10010	
+10011	
+10016	
+10017	
+10018	
+10019	
+10020	
+10021	
+10022	
+10023	
+10024	
+10025	
+10026	
+10027	
+10032	
+10033	
+10034	
+10035	
+10036	
+10037	
+10038	
+10039	
+10040	
+10041	
+10042	
+10043	
+10048	
+10049	
+10050	
+10051	
+10052	
+10053	
+10054	
+10055	
+10056	
+10057	
+10058	
+10059	
+10060	
+10061	
+10062	
+10063	
+10064	
+10065	
+10066	
+10067	
+10068	
+10069	
+10070	
+10071	
+10076	
+10077	
+10078	
+10079	
+10080	
+10081	
+10082	
+10083	
+10084	
+10085	
+10086	
+10087	
+10092	
+10093	
+10094	
+10095	
+10096	
+10097	
+10098	
+10099	
+10100	
+10101	
+10102	
+10103	
+10108	
+10109	
+10110	
+10111	
+10112	
+10113	
+10114	
+10115	
+10116	
+10117	
+10118	
+10119	
+10124	
+10129	
+10134	
+10139	
+10140	
+10141	
+10142	
+10143	
+10144	
+10145	
+10146	
+10147	
+10148	
+10149	
+10150	
+10151	
+10152	
+10153	
+10154	
+10155	
+10156	
+10157	
+10158	
+10159	
+10160	
+10161	
+10162	
+10163	
+10164	
+10165	
+10166	
+10167	
+10168	
+10169	
+10170	
+10171	
+10172	
+10173	
+10174	
+10175	
+10176	
+10177	
+10178	
+10179	
+10180	
+10181	
+10182	
+10183	
+10184	
+10185	
+10186	
+10187	
+10188	
+10189	
+10190	
+10191	

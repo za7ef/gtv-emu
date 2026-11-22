@@ -37,12 +37,13 @@ def main():
     ap.add_argument('out')
     ap.add_argument('--hardware', default='gtv')
     ap.add_argument('--fstab', action='append', default=[])
+    ap.add_argument('--fstab-file', help='ملف fstab كامل بدل --fstab')
     ap.add_argument('--module', action='append', default=[])
     a = ap.parse_args()
     data = b''
     for d in ('first_stage_ramdisk', 'lib', 'lib/modules'):
         data += entry(d, stat.S_IFDIR | 0o755)
-    fstab = ''.join(l + '\n' for l in a.fstab).encode()
+    fstab = open(a.fstab_file, 'rb').read() if a.fstab_file else ''.join(l + '\n' for l in a.fstab).encode()
     data += entry('fstab.' + a.hardware, stat.S_IFREG | 0o644, fstab)
     data += entry('first_stage_ramdisk/fstab.' + a.hardware, stat.S_IFREG | 0o644, fstab)
     names = {}

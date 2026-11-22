@@ -40,10 +40,11 @@ struct ImagesView: View {
     private func profileSection(_ p: ImageProfile) -> some View {
         Section {
             if let d = p.description { Text(d).font(.footnote).foregroundColor(.secondary) }
+            if let n = p.notice { Text(n).font(.caption2).foregroundColor(.secondary) }
             ForEach(p.files) { f in fileRow(p, f) }
             HStack {
                 Button { store.download(p) } label: { Label("تنزيل الكل", systemImage: "arrow.down.circle") }
-                    .disabled(store.isReady(p))
+                    .disabled(store.isReady(p) || store.readyToPrepare(p))
                 Spacer()
                 Button(role: .destructive) { store.delete(p) } label: { Label("حذف", systemImage: "trash") }
             }
@@ -70,10 +71,12 @@ struct ImagesView: View {
                 }
                 Spacer()
                 if let s = f.size { Text(ByteCountFormatter.string(fromByteCount: s, countStyle: .file)).font(.caption) }
+                if f.generated == true { Text("يُنشأ على الجهاز").font(.caption2).foregroundColor(.secondary) } else {
                 Menu {
                     Button { store.download(p, f) } label: { Label("تنزيل", systemImage: "arrow.down") }
                     Button { importing = (p, f); showImporter = true } label: { Label("استيراد من الملفات", systemImage: "folder") }
                 } label: { Image(systemName: "ellipsis.circle") }
+                }
             }
             if let prog = store.progress[f.id] { ProgressView(value: prog) }
             if let st = store.status[f.id] { Text(st).font(.caption2).foregroundColor(.secondary) }
@@ -88,6 +91,9 @@ struct ImagesView: View {
         case "vendor_boot": return "vendor_boot.img"
         case "init_boot": return "init_boot.img"
         case "disk": return "صورة النظام / القرص"
+        case "source": return "ملف Google الأصلي (يُحذف بعد التجهيز)"
+        case "prep_kernel": return "نواة آلة التجهيز"
+        case "prep_initrd": return "أدوات التجهيز"
         default: return r
         }
     }

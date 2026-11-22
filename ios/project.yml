@@ -19,6 +19,8 @@ targets:
       - path: ../core
         excludes:
           - main.c
+    dependencies:
+      - sdk: libz.tbd
     info:
       path: GTVEmu/Info.plist
       properties:
@@ -43,7 +45,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.za7ef.gtvemu
-        MARKETING_VERSION: "0.2.1"
+        MARKETING_VERSION: "0.3.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_OBJC_BRIDGING_HEADER: GTVEmu/Bridging-Header.h
         HEADER_SEARCH_PATHS: $(SRCROOT)/../core

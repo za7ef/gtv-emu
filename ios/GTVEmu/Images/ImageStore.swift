@@ -23,8 +23,13 @@ struct ImageProfile: Codable, Identifiable, Hashable {
     var cores: Int?
     var experimental: Bool?       // نظام تجريبي لا يكتمل إقلاعه بعد
     var note: String?             // سطر قصير يظهر تحت الاسم
+    var notice: String?           // تنبيه الترخيص يظهر قبل التنزيل
     var files: [ImageFile]
-    var downloadSize: Int64 { files.reduce(0) { $0 + ($1.size ?? 0) } }
+    /// الملفات التي تُنزَّل فعلًا (دون الملفات المولَّدة على الجهاز)
+    var downloadFiles: [ImageFile] { files.filter { $0.generated != true } }
+    var downloadSize: Int64 { downloadFiles.reduce(0) { $0 + ($1.size ?? 0) } }
+    /// يحتاج النظام خطوة تجهيز على الجهاز بعد التنزيل
+    var needsPrepare: Bool { files.contains { $0.generated == true } }
 }
 
 struct ImageFile: Codable, Identifiable, Hashable {
@@ -37,6 +42,8 @@ struct ImageFile: Codable, Identifiable, Hashable {
     var sha256: String?           // بصمة الملف كما يُنزَّل
     var gunzip: Bool?             // فك ضغط gzip بعد التنزيل
     var optional: Bool?
+    var generated: Bool?          // يُنشأ على الجهاز في خطوة التجهيز ولا يُنزَّل
+    var transient: Bool?          // يُحذف بعد التجهيز لتوفير المساحة
     var id: String { role + "/" + name }
 }
 
@@ -50,18 +57,22 @@ final class ImageStore: NSObject, ObservableObject {
     @Published private(set) var progress: [String: Double] = [:]   // معرّف الملف ← نسبة التنزيل
     @Published private(set) var status: [String: String] = [:]     // معرّف الملف ← رسالة
     @Published var lastError: String?
+    // خطوة التجهيز على الجهاز (Android TV)
+    @Published var preparingID: String?
+    @Published var prepareProgress: Double = 0
+    @Published var prepareStatus: String?
 
     private var tasks: [Int: (profile: ImageProfile, file: ImageFile)] = [:]
     private var resumeData: [String: Data] = [:]   // استئناف التنزيل المنقطع لكل ملف
 
     /// هل يُنزَّل أي ملف من هذا النظام الآن؟
-    func isDownloading(_ p: ImageProfile) -> Bool { p.files.contains { progress[$0.id] != nil } }
+    func isDownloading(_ p: ImageProfile) -> Bool { p.downloadFiles.contains { progress[$0.id] != nil } }
     /// نسبة تنزيل النظام كاملًا (الملفات الموجودة تُحسب مكتملة)
     func overallProgress(_ p: ImageProfile) -> Double {
         let total = Double(max(p.downloadSize, 1))
-        let done = p.files.reduce(0.0) { acc, f in
+        let done = p.downloadFiles.reduce(0.0) { acc, f in
             let sz = Double(f.size ?? 0)
-            if isPresent(p, f) { return acc + sz }
+            if isPresent(p, f) || (f.transient == true && generatedReady(p)) { return acc + sz }
             return acc + sz * (progress[f.id] ?? 0)
         }
         return min(1, done / total)
@@ -99,7 +110,15 @@ final class ImageStore: NSObject, ObservableObject {
 
     func isPresent(_ p: ImageProfile, _ f: ImageFile) -> Bool { FileManager.default.fileExists(atPath: localURL(p, f).path) }
 
-    func isReady(_ p: ImageProfile) -> Bool { p.files.allSatisfy { $0.optional == true || isPresent(p, $0) } }
+    func isReady(_ p: ImageProfile) -> Bool { p.files.allSatisfy { $0.optional == true || $0.transient == true || isPresent(p, $0) } }
+
+    /// هل أُنشئت كل الملفات المولَّدة؟
+    func generatedReady(_ p: ImageProfile) -> Bool { p.files.allSatisfy { $0.generated != true || isPresent(p, $0) } }
+
+    /// اكتمل التنزيل وبقيت خطوة التجهيز
+    func readyToPrepare(_ p: ImageProfile) -> Bool {
+        p.needsPrepare && !generatedReady(p) && p.downloadFiles.allSatisfy { $0.optional == true || isPresent(p, $0) }
+    }
 
     func url(_ p: ImageProfile, role: String) -> URL? {
         guard let f = p.files.first(where: { $0.role == role }), isPresent(p, f) else { return nil }
@@ -193,7 +212,10 @@ final class ImageStore: NSObject, ObservableObject {
     // MARK: التنزيل
 
     func download(_ p: ImageProfile) {
-        for f in p.files where !isPresent(p, f) { download(p, f) }
+        for f in p.downloadFiles where !isPresent(p, f) {
+            if f.transient == true && generatedReady(p) { continue }
+            download(p, f)
+        }
     }
 
     func download(_ p: ImageProfile, _ f: ImageFile) {
@@ -241,6 +263,7 @@ final class ImageStore: NSObject, ObservableObject {
     }
 
     func delete(_ p: ImageProfile) {
+        guard preparingID != p.id else { return }
         try? FileManager.default.removeItem(at: dir(for: p))
         objectWillChange.send()
     }

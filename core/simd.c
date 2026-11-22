@@ -579,6 +579,17 @@ static int exec_adv_simd(CPU *c, uint32_t insn) {
             }
             *vd = res; return 1;
         }
+        case 0x04: { /* CLS / CLZ */
+            if (esz > 4) return 0;
+            int bits = esz * 8;
+            for (int i = 0; i < n; i++) {
+                uint64_t a = lane(vn, esz, i); int cnt = 0;
+                if (U) { for (int k = bits - 1; k >= 0 && !BIT(a, k); k--) cnt++; }
+                else { int s = BIT(a, bits - 1); for (int k = bits - 2; k >= 0 && BIT(a, k) == s; k--) cnt++; }
+                set_lane(&res, esz, i, cnt);
+            }
+            *vd = res; return 1;
+        }
         case 0x05:
             if (!U && size == 0) { for (int i = 0; i < nbytes; i++) set_lane(&res, 1, i, __builtin_popcount(lane(vn, 1, i))); }
             else if (U && size == 0) { res.lo = ~vn->lo; res.hi = ~vn->hi; }
@@ -619,7 +630,7 @@ static int exec_adv_simd(CPU *c, uint32_t insn) {
             }
             *vd = out; return 1;
         }
-        case 0x1D: case 0x1B: case 0x1A: case 0x1C: case 0x18: case 0x19: case 0x0F: case 0x0C: case 0x0D: case 0x0E: {
+        case 0x1D: case 0x1B: case 0x1A: case 0x1C: case 0x18: case 0x19: case 0x0F: case 0x0C: case 0x0D: case 0x0E: case 0x1F: {
             /* عائم متجهي: تحويلات ومقارنات بالصفر */
             int dbl = BIT(insn, 22), fesz = dbl ? 8 : 4, m = nbytes / fesz;
             int hi = BIT(insn, 23);

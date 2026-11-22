@@ -6,7 +6,12 @@
 set -e
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OUT=$(mkdir -p "${1:-assets}" && cd "${1:-assets}" && pwd)
-ANDROID=0; [ "$2" = "--android" ] && ANDROID=1
+ANDROID=0; TV=1
+for a in "$2" "$3"; do [ "$a" = "--android" ] && ANDROID=1; [ "$a" = "--no-tv" ] && TV=0; done
+# ملف تعريف Android TV (يُبنى افتراضيًا، ويُتخطى بـ --no-tv). صورة Google لا تُنشر؛ التطبيق ينزّلها من dl.google.com ويجهّزها على الجهاز.
+# المنشور هنا: نواة GKI (GPL) وvendor_boot ووحدات virtio، وinit_boot من AOSP Cuttlefish، وقرص التجهيز
+# الأولي (Alpine + e2fsprogs + مكوّنات رسوميات Cuttlefish بترخيص Apache 2.0).
+# المكوّنات تُنزَّل من فرع tv-cf-parts في المستودع، أو من مجلد محلي في CF_PARTS.
 WORK=${WORK:-$OUT/work}
 mkdir -p "$WORK" && cd "$WORK"
 
@@ -77,9 +82,24 @@ if [ $ANDROID = 1 ]; then
   stat -c %s sys.img > "$OUT/.system-size"
 fi
 
+if [ $TV = 1 ]; then
+  sh "$ROOT/android/scripts/fetch-gki.sh" "$WORK/gki"
+  (cd "$WORK/gki" && HW=ranchu FSTAB_FILE="$ROOT/android/tv/fstab.gtv" sh "$ROOT/android/scripts/mkvendorboot.sh" . && cp vb.img "$OUT/tv-vendor_boot.img")
+  cp "$WORK/gki/boot-6.1-gz.img" "$OUT/tv-boot.img"
+  cp "$WORK/gki/init_boot.img" "$OUT/tv-init_boot.img"
+  if [ -z "$CF_PARTS" ]; then
+    CF_PARTS="$WORK/cf"; mkdir -p "$CF_PARTS"
+    for f in com.google.cf.vulkan.apex com.google.cf.gralloc.apex com.android.hardware.graphics.composer.ranchu.apex \
+             mapper.minigbm.so libminigbm_gralloc.so libc++.so libdmabufheap.so mapper.minigbm.xml; do
+      [ -f "$CF_PARTS/$f" ] || curl -sfL -o "$CF_PARTS/$f" "https://raw.githubusercontent.com/za7ef/gtv-emu/tv-cf-parts/cf/$f"
+    done
+  fi
+  APK_CACHE="$WORK/apk" python3 "$ROOT/tools/mktvprep.py" "$OUT/alpine-initrd.gz" "$CF_PARTS" "$OUT/tv-prep-initrd.gz"
+fi
+
 # ===== manifest.json =====
 cd "$OUT"
-python3 - "$ANDROID" <<'PY'
+python3 - "$ANDROID" "$TV" <<'PY'
 import hashlib, json, os, sys
 def sha(p):
     h = hashlib.sha256()
@@ -106,6 +126,21 @@ if sys.argv[1] == "1":
         "ramMB": 1024, "cores": 2,
         "files": [ent("boot", "android-boot.img"), ent("vendor_boot", "android-vendor_boot.img"), ent("init_boot", "android-init_boot.img"),
                   ent("disk", "android-system.img", asset="android-system.img.gz", gunzip=True, size=int(open(".system-size").read()))]})
+if len(sys.argv) > 2 and sys.argv[2] == "1":
+    profiles.append({
+        "id": "android-tv", "name": "Android TV 16", "kind": "android",
+        "experimental": True,
+        "note": "تجريبي: يصل إلى شعار الإقلاع، وواجهة التلفاز لم تكتمل بعد",
+        "description": "نظام Android TV 16 الرسمي من Google (API 36). يُنزَّل من خوادم Google مباشرة، ثم يُجهَّز على الجهاز: استخراج الأقسام وإضافة مكدّس رسوميات برمجي من AOSP. يحتاج JIT ونحو 3 غيغابايت من المساحة.",
+        "notice": "صورة النظام مملوكة لشركة Google وتخضع لترخيص Android SDK. تُنزَّل من dl.google.com إلى جهازك مباشرة، ولا يعيد هذا التطبيق توزيعها.",
+        "ramMB": 1536, "cores": 2,
+        "files": [
+            {"role": "source", "name": "android-tv-36_r04.zip", "url": "https://dl.google.com/android/repository/sys-img/android-tv/arm64-v8a-36_r04.zip",
+             "size": 970375839, "sha256": "7398e2f00e5df28332027d5a131fcbefb8d5823bc7103a65a035575d271ffcca", "transient": True},
+            ent("boot", "tv-boot.img"), ent("vendor_boot", "tv-vendor_boot.img"), ent("init_boot", "tv-init_boot.img"),
+            dict(ent("prep_kernel", "prep-Image.gz", asset="alpine-Image.gz")),
+            ent("prep_initrd", "tv-prep-initrd.gz"),
+            {"role": "disk", "name": "tvdisk.img", "generated": True, "size": 5247074304}]})
 json.dump({"version": 1, "profiles": profiles}, open("manifest.json", "w"), ensure_ascii=False, indent=2)
 print(open("manifest.json").read())
 PY

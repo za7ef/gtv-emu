@@ -1,6 +1,7 @@
 /* gtv-emu — واجهة سطر الأوامر لتشغيل نواة لينكس على المحاكي. */
 #include "emu.h"
 #include "gtv.h"
+#include "atvprep.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,7 +23,19 @@ static void usage(void) {
     exit(1);
 }
 
+static void prog(void *ctx, double f, const char *st) {
+    static int last = -1; (void)ctx;
+    if ((int)(f * 100) != last) { last = (int)(f * 100); fprintf(stderr, "\r[gtv] %s %d%%   ", st, last); }
+}
+
 int main(int argc, char **argv) {
+    /* تجهيز صورة Android TV: gtv-emu --atv-extract ملف.zip قرص.img init_boot.img */
+    if ((argc == 4 || argc == 5) && !strcmp(argv[1], "--atv-extract")) {
+        char e[256] = "";
+        int r = gtv_atv_extract(argv[2], argv[3], argc == 5 ? argv[4] : NULL, prog, NULL, e, sizeof e);
+        fprintf(stderr, "\n[gtv] %s\n", r ? e : "تم");
+        return r ? 1 : 0;
+    }
     GtvConfig c; memset(&c, 0, sizeof c);
     const char *shot = NULL;
     uint64_t max_insns = 0;

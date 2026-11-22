@@ -18,14 +18,15 @@ struct MachineView: View {
 
     var body: some View {
         Group {
-            if engine.isRunning { running } else { home }
+            if engine.isRunning && store.preparingID == nil { running } else { home }
         }
         .sheet(isPresented: $showSettings) {
             NavigationStack { SettingsView() }
                 .environment(\.layoutDirection, .rightToLeft)
                 .preferredColorScheme(.dark)
         }
-        .task { if store.manifest == nil { await store.refreshManifest() } }
+        // القائمة تُحدَّث عند كل تشغيل حتى تطابق بصمات الملفات المنشورة حاليًا
+        .task { if store.preparingID == nil { await store.refreshManifest() } }
     }
 
     // MARK: - الشاشة الرئيسية (قبل التشغيل)
@@ -84,6 +85,10 @@ struct MachineView: View {
                     if let n = p.note { Text(n).font(.caption).foregroundColor(p.experimental == true ? .orange : .secondary) }
                     Text(stateText(p)).font(.caption).foregroundColor(.secondary)
                     if store.isDownloading(p) { ProgressView(value: store.overallProgress(p)) }
+                    if store.preparingID == p.id { ProgressView(value: store.prepareProgress) }
+                    if selected, let n = p.notice, !store.isReady(p) {
+                        Label(n, systemImage: "doc.text.magnifyingglass").font(.caption2).foregroundColor(.secondary)
+                    }
                 }
                 Spacer()
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
@@ -93,12 +98,17 @@ struct MachineView: View {
             .background(RoundedRectangle(cornerRadius: 16).fill(Color.white.opacity(selected ? 0.12 : 0.06)))
         }
         .buttonStyle(.plain)
-        .disabled(engine.isRunning)
+        .disabled(engine.isRunning || store.preparingID != nil)
     }
 
     private func stateText(_ p: ImageProfile) -> String {
         let size = ByteCountFormatter.string(fromByteCount: p.downloadSize, countStyle: .file)
         if store.isReady(p) { return "جاهز للتشغيل" }
+        if store.preparingID == p.id { return (store.prepareStatus ?? "يُجهَّز...") + " (أبقِ التطبيق مفتوحًا)" }
+        if store.readyToPrepare(p) {
+            if let st = store.prepareStatus, st.hasPrefix("فشل") { return st }
+            return "اكتمل التنزيل، بقي تجهيز النظام (عدة دقائق)"
+        }
         if store.isDownloading(p) { return String(format: "جاري التنزيل %.0f٪ من %@", store.overallProgress(p) * 100, size) }
         if let f = store.failure(p) { return f + " (اضغط تنزيل للاستئناف)" }
         return "يحتاج تنزيل \(size)"
@@ -111,6 +121,14 @@ struct MachineView: View {
                 Label("تشغيل", systemImage: "play.fill").font(.title2.bold()).frame(maxWidth: .infinity).padding(.vertical, 8)
             }
             .buttonStyle(.borderedProminent).tint(.green)
+        } else if store.preparingID == p.id {
+            Label("يُجهَّز النظام...", systemImage: "gearshape.2.fill").frame(maxWidth: .infinity).padding(.vertical, 8)
+        } else if store.readyToPrepare(p) {
+            Button { store.prepare(p, jitMode: JITMode(rawValue: jitMode) ?? .auto) } label: {
+                Label("تجهيز النظام", systemImage: "gearshape.2.fill")
+                    .font(.title3.bold()).frame(maxWidth: .infinity).padding(.vertical, 8)
+            }
+            .buttonStyle(.borderedProminent).tint(.orange)
         } else if store.isDownloading(p) {
             Button(role: .cancel) { store.cancelAll() } label: {
                 Label("إيقاف التنزيل مؤقتًا", systemImage: "pause.fill").frame(maxWidth: .infinity).padding(.vertical, 8)
@@ -118,7 +136,7 @@ struct MachineView: View {
             .buttonStyle(.bordered)
         } else {
             Button { store.download(p) } label: {
-                Label(p.kind == "android" ? "تنزيل نظام Android TV" : "تنزيل \(p.name)", systemImage: "arrow.down.circle.fill")
+                Label(p.needsPrepare ? "تنزيل نظام Android TV (تجريبي)" : (p.kind == "android" ? "تنزيل نظام Android TV" : "تنزيل \(p.name)"), systemImage: "arrow.down.circle.fill")
                     .font(.title3.bold()).frame(maxWidth: .infinity).padding(.vertical, 8)
             }
             .buttonStyle(.borderedProminent)

@@ -271,6 +271,8 @@ static void gpu_cmd(Machine *m, Gpu *g, const uint8_t *req, uint32_t rl, uint8_t
     memset(resp, 0, 24);
     *resp_len = 24;
 #define U32(o) ({ uint32_t _v; memcpy(&_v, a + (o), 4); _v; })
+    { static int tr = -1, cnt = 0; if (tr < 0) tr = getenv("GTV_GPU_TRACE") != NULL;
+      if (tr && cnt++ < 400) fprintf(stderr, "[gtv] gpu cmd %04x a0=%u a1=%u a2=%u a3=%u\n", type, U32(0), U32(4), U32(8), U32(12)); }
     switch (type) {
     case 0x0100: { /* GET_DISPLAY_INFO */
         rtype = 0x1101;
