@@ -10,6 +10,7 @@ struct SettingsView: View {
     @AppStorage("releaseTag") private var releaseTag = "images-v1"
     @AppStorage("githubToken") private var token = ""
     @AppStorage("manifestURL") private var manifestURL = ""
+    @AppStorage(UsageStats.enabledKey) private var usageStats = true
     @ObservedObject private var engine = EmulatorEngine.shared
 
     private var physicalGB: Double { Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824 }
@@ -23,6 +24,13 @@ struct SettingsView: View {
                 LabeledContent("حالة JIT", value: engine.jitStatus.isEmpty ? "تُفحص عند التشغيل" : engine.jitStatus)
             } header: { Text("السرعة") } footer: {
                 Text("لتسريع المحاكاة على iOS 26: افتح التطبيق من StikDebug، واختر له سكربت universal.js يدويًا من قائمة السكربتات. بدونه يعمل التطبيق أبطأ، لكنه يعمل.")
+            }
+
+            Section {
+                Toggle("مشاركة إحصائيات الاستخدام المجهولة", isOn: $usageStats)
+                    .onChange(of: usageStats) { _, v in UsageStats.isEnabled = v }
+            } header: { Text("الإحصائيات") } footer: {
+                Text("تُرسل إشارة مجهولة عند فتح التطبيق لمعرفة عدد المستخدمين، تتضمن رقم الإصدار وإصدار النظام والمنطقة واللغة فقط، مع معرّف عشوائي مشفّر لا يكشف هوية المستخدم. ولا تُرسل أي بيانات شخصية أو ملفات.")
             }
 
             Section {

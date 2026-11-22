@@ -5,7 +5,10 @@ import SwiftUI
 struct GTVEmuApp: App {
     @StateObject private var updater = UpdateChecker.shared
 
-    init() { _ = EmulatorEngine.shared }
+    init() {
+        _ = EmulatorEngine.shared
+        UsageStats.start()
+    }
 
     var body: some Scene {
         WindowGroup {
