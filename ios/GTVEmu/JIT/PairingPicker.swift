@@ -9,6 +9,8 @@ import UniformTypeIdentifiers
 struct PairingPicker: UIViewControllerRepresentable {
     var onPick: (URL) -> Void
     var onCancel: () -> Void = {}
+    /// أنواع مخصصة؛ nil = أنواع ملف الاقتران. يُستخدم المنتقي نفسه (بالنسخ) في كل التطبيق
+    var contentTypes: [UTType]? = nil
 
     static var types: [UTType] {
         var t: [UTType] = [.propertyList, .xmlPropertyList, .binaryPropertyList, .xml, .data, .item, .content, .text]
@@ -23,7 +25,7 @@ struct PairingPicker: UIViewControllerRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let vc = UIDocumentPickerViewController(forOpeningContentTypes: Self.types, asCopy: true)
+        let vc = UIDocumentPickerViewController(forOpeningContentTypes: contentTypes ?? Self.types, asCopy: true)
         vc.allowsMultipleSelection = false
         vc.shouldShowFileExtensions = true
         vc.delegate = context.coordinator

@@ -30,9 +30,14 @@ struct ImagesView: View {
             }
         }
         .refreshable { await store.refreshManifest() }
-        .fileImporter(isPresented: $showImporter, allowedContentTypes: [.data, .item]) { result in
-            if case .success(let url) = result, let pf = importing { store.importFile(url, into: pf.0, pf.1) }
-            importing = nil
+        // منتقي بالنسخ (asCopy) كما في استيراد ملف الاقتران، ليعمل مع أدوات التثبيت الجانبي على iOS 26
+        .sheet(isPresented: $showImporter) {
+            PairingPicker(onPick: { url in
+                showImporter = false
+                if let pf = importing { store.importFile(url, into: pf.0, pf.1) }
+                importing = nil
+            }, onCancel: { showImporter = false; importing = nil }, contentTypes: [.data, .item])
+            .ignoresSafeArea()
         }
     }
 
