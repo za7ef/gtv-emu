@@ -76,7 +76,9 @@ struct Credit: Identifiable {
     static let all: [Credit] = [
         Credit(name: "Alpine Linux", detail: "نواة linux-virt وملف initramfs المستخدمان في ملف التعريف التجريبي. النواة مرخّصة بـ GPL-2.0، وحزم Alpine بتراخيص أصحابها."),
         Credit(name: "Android Open Source Project و GKI", detail: "نواة Android العامة وصور الإقلاع من Google، مرخّصة بـ GPL-2.0 للنواة و Apache-2.0 لبقية المشروع."),
-        Credit(name: "StikDebug", detail: "بروتوكول تفعيل المترجم الفوري على أجهزة TXM مبنيّ وفق سكربت universal.js المنشور في مستودع StikDebug (رخصة AGPL-3.0)."),
+        Credit(name: "StikJIT", detail: "إطار التفعيل المدمج للمترجم الفوري، ويتضمن سكربت universal.js. مرخّص بـ MPL-2.0، ومصدره في مستودع StikDebug/StikJIT. عُدّل ملف واجهته البرمجية فقط ليُقرأ بإصدار أقدم من Xcode."),
+        Credit(name: "idevice", detail: "مكتبة الاتصال بخدمات الجهاز، المضمّنة في StikJIT، من تطوير Jackson Coxson، ومرخّصة بـ MIT."),
+        Credit(name: "StikDebug", detail: "الطريقة البديلة لتفعيل المترجم الفوري عبر رابط stikdebug://. بروتوكول نقاط التوقف في التطبيق مبنيّ وفق سكربت universal.js (رخصة AGPL-3.0)، دون تضمين شيء من شيفرته."),
         Credit(name: "Linux virtio", detail: "مواصفات أجهزة virtio من OASIS، المستخدمة في محاكاة القرص والشبكة والرسوميات والإدخال والصوت."),
     ]
 }

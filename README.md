@@ -96,7 +96,7 @@ cc -O1 -o unit tests/unit_test.c core/simd.c core/devices.c core/virtio.c core/n
 
 ## تطبيق iOS
 
-يشغّل التطبيق المحرك نفسه على iPhone، مع عرض Metal ولمس وريموت وصوت وطرفية وتنزيل للصور. يعمل JIT عبر StikDebug (مسار TXM في iOS 26 وما بعده)، ويعمل المفسّر حين لا يتاح JIT. التفاصيل في [docs/IOS.md](docs/IOS.md).
+يشغّل التطبيق المحرك نفسه على iPhone، مع عرض Metal ولمس وريموت وصوت وطرفية وتنزيل للصور. يُفعَّل JIT بطريقة مدمجة عبر ملف الاقتران وLocalDevVPN باستخدام إطار StikJIT، أو عبر StikDebug طريقةً بديلة (مسار TXM في iOS 26 وما بعده)، ويعمل المفسّر حين لا يتاح JIT. وتراخيص المكتبات المضمّنة في ios/Vendor. التفاصيل في [docs/IOS.md](docs/IOS.md).
 
 ## المراحل التالية
 

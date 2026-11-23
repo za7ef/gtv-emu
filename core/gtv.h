@@ -33,6 +33,17 @@ enum { GTV_JIT_AUTO = 0, GTV_JIT_TXM = 1, GTV_JIT_LEGACY = 2, GTV_JIT_OFF = 3 };
 void gtv_set_jit_mode(int mode);
 /* وصف نصي لنتيجة آخر محاولة لتفعيل المترجم الفوري */
 const char *gtv_jit_status(void);
+/* رمز سبب آخر نتيجة (للواجهة) */
+enum { GTV_JIT_R_NONE = 0, GTV_JIT_R_OK = 1, GTV_JIT_R_DISABLED = 2, GTV_JIT_R_NOT_DEBUGGED = 3,
+       GTV_JIT_R_NOT_TRACED = 4, GTV_JIT_R_NO_SCRIPT = 5, GTV_JIT_R_PREPARE_FAILED = 6,
+       GTV_JIT_R_REMAP_FAILED = 7, GTV_JIT_R_HIGH_ADDRESS = 8, GTV_JIT_R_UNSUPPORTED = 9 };
+int gtv_jit_reason(void);
+/* يجهّز منطقة التنفيذ مبكرًا ما دام المصحّح مرفقًا؛ ينتظر إرفاقه حتى wait_ms. يعيد 1 عند النجاح. */
+int gtv_jit_prewarm(int wait_ms);
+/* هل منطقة التنفيذ جاهزة ومحفوظة لهذه الجلسة؟ */
+int gtv_jit_ready(void);
+/* البت 0: CS_DEBUGGED، البت 1: مصحّح يتتبّع العملية الآن */
+int gtv_jit_debug_state(void);
 
 void gtv_set_host(GtvHost *host);
 GtvMachine *gtv_create(const GtvConfig *cfg, char *err, size_t errlen);

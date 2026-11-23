@@ -4,6 +4,7 @@ import SwiftUI
 struct MachineView: View {
     @ObservedObject private var engine = EmulatorEngine.shared
     @ObservedObject private var store = ImageStore.shared
+    @ObservedObject private var jit = JITManager.shared
     @AppStorage("ramMB") private var ramMB = 1024
     @AppStorage("cores") private var cores = 2
     @AppStorage("jitMode") private var jitMode = JITMode.auto.rawValue
@@ -145,12 +146,20 @@ struct MachineView: View {
 
     /// سطر حالة واضح للمترجم الفوري
     private var statusLine: some View {
-        let s = engine.jitStatus
-        let on = s.hasPrefix("مفعّل")
-        return Label(on ? "JIT مفعّل" : "JIT غير مفعّل: " + (s.isEmpty ? "يُفحص عند التشغيل" : s),
-                     systemImage: on ? "bolt.fill" : "tortoise.fill")
-            .font(.footnote)
-            .foregroundColor(on ? .yellow : .secondary)
+        let on = jit.isReady || engine.jitStatus.hasPrefix("مفعّل")
+        var working = false
+        if case .working = jit.phase { working = true }
+        return VStack(spacing: 6) {
+            Label(on ? "JIT مفعّل" : "JIT غير مفعّل: " + jit.summary,
+                  systemImage: on ? "bolt.fill" : (working ? "hourglass" : "tortoise.fill"))
+                .font(.footnote)
+                .foregroundColor(on ? .yellow : .secondary)
+            if !on && !working {
+                Button("تفعيل JIT") { jit.enable() }
+                    .font(.footnote.bold())
+                    .buttonStyle(.bordered)
+            }
+        }
     }
 
     // MARK: - أثناء التشغيل

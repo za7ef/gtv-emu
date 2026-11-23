@@ -13,6 +13,7 @@
  * يُستخدم المفسّر احتياطيًا لكل تعليمة غير مترجمة، وللمسار البطيء للذاكرة (MMIO وأخطاء الصفحات).
  */
 #include "emu.h"
+#include "gtv.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,6 +27,7 @@
 #include <libkern/OSCacheControl.h>
 #include <mach/mach.h>
 #endif
+#include <pthread.h>
 
 #define BIT(x, n) (((x) >> (n)) & 1)
 #define BITS(x, hi, lo) (((x) >> (lo)) & ((1ULL << ((hi) - (lo) + 1)) - 1))
@@ -63,9 +65,12 @@ typedef struct Jit {
 /* نتبع نموذج W^X: نافذتان للذاكرة نفسها، واحدة للكتابة وأخرى للتنفيذ، كما يتطلب iOS. */
 static int jit_mode;             /* GTV_JIT_AUTO وأخواته من gtv.h */
 static char jit_status_buf[200] = "لم تُجرَّب بعد";
+static int jit_reason = GTV_JIT_R_NONE;
 void gtv_set_jit_mode(int mode) { jit_mode = mode; }
 const char *gtv_jit_status(void) { return jit_status_buf; }
+int gtv_jit_reason(void) { return jit_reason; }
 #define JIT_STATUS(...) snprintf(jit_status_buf, sizeof jit_status_buf, __VA_ARGS__)
+#define JIT_FAIL(code, ...) do { jit_reason = (code); JIT_STATUS(__VA_ARGS__); } while (0)
 
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
@@ -142,17 +147,23 @@ static void *guarded_call(int detach, size_t len) {
 
 static int jit_alloc_txm(Jit *j) {
     if (!ptraced_now()) {
-        JIT_STATUS("TXM: المصحّح غير مرفق الآن (فُصل بعد التفعيل). في StikDebug اختر سكربت universal.js لهذا التطبيق");
+        JIT_FAIL(GTV_JIT_R_NOT_TRACED, "TXM: المصحّح فُصل قبل تجهيز منطقة التنفيذ؛ تُجهَّز المنطقة الآن عند فتح التطبيق، فأعد التفعيل وانتظر رسالة الجاهزية");
         return 0;
     }
     void *rxp = guarded_call(0, CODE_SIZE);
     if (brk_unhandled) {
-        JIT_STATUS("TXM: لم يعالج StikDebug الطلب؛ اختر سكربت universal.js لـ GTV Emu يدويًا ثم أعد التشغيل");
+        JIT_FAIL(GTV_JIT_R_NO_SCRIPT, "TXM: المصحّح مرفق لكنه لم يعالج الطلب (لا يعمل سكربت universal.js)");
         return 0;
     }
     if (!rxp || (uintptr_t)rxp == 0xE0000069) {
         guarded_call(1, 0);
-        JIT_STATUS("TXM: لم يُعِد المصحّح منطقة RX (السكربت المرفق ليس universal.js؟)");
+        JIT_FAIL(GTV_JIT_R_PREPARE_FAILED, "TXM: لم يُعِد المصحّح منطقة تنفيذ (السكربت المرفق ليس universal.js؟)");
+        return 0;
+    }
+    if ((uintptr_t)rxp > 0xFFFFFFFFFull) {
+        /* أداة StikDebug الحالية تكتب العنوان بتسعة أرقام ست عشرية فقط، فتُجهَّز صفحات خاطئة فوق 64 غيغابايت */
+        guarded_call(1, 0);
+        JIT_FAIL(GTV_JIT_R_HIGH_ADDRESS, "TXM: عنوان منطقة التنفيذ أعلى من 64 غيغابايت (0x%llx)، ولا تدعمه أداة التجهيز", (unsigned long long)(uintptr_t)rxp);
         return 0;
     }
     vm_address_t rx = (vm_address_t)rxp, rw = 0;
@@ -162,13 +173,14 @@ static int jit_alloc_txm(Jit *j) {
     if (kr == KERN_SUCCESS && mprotect((void *)rw, CODE_SIZE, PROT_READ | PROT_WRITE) != 0) kr = KERN_PROTECTION_FAILURE;
     /* المنطقة جاهزة؛ نفصل المصحّح حتى لا تمر إشارات المحاكي عبره ولا تتأثر العملية بانقطاعه */
     guarded_call(1, 0);
-    if (kr != KERN_SUCCESS) { JIT_STATUS("TXM: فشل تجهيز نافذة الكتابة (%d)", kr); return 0; }
+    if (kr != KERN_SUCCESS) { JIT_FAIL(GTV_JIT_R_REMAP_FAILED, "TXM: فشل تجهيز نافذة الكتابة (%d)", kr); return 0; }
     /* فحص ذاتي: كتابة ret في نافذة الكتابة وتنفيذها من نافذة التنفيذ */
     *(volatile uint32_t *)rw = 0xD65F03C0;
     sys_icache_invalidate((void *)rx, 4);
     ((void (*)(void))(void *)rx)();
     j->rw = (uint8_t *)rw; j->rx = (uint8_t *)rx;
-    JIT_STATUS("مفعّل: مسار TXM عبر StikDebug (iOS %d)", os_major());
+    jit_reason = GTV_JIT_R_OK;
+    JIT_STATUS("مفعّل: مسار TXM (iOS %d)", os_major());
     return 1;
 }
 
@@ -179,8 +191,9 @@ static int jit_alloc_legacy(Jit *j) {
     vm_prot_t cur, max;
     if (vm_remap(mach_task_self(), &rx, CODE_SIZE, 0, VM_FLAGS_ANYWHERE, mach_task_self(), rw, 0,
                  &cur, &max, VM_INHERIT_NONE) != KERN_SUCCESS) { JIT_STATUS("فشل vm_remap"); return 0; }
-    if (mprotect((void *)rx, CODE_SIZE, PROT_READ | PROT_EXEC) != 0) { JIT_STATUS("رفض النظام صفحات RX (JIT غير مفعّل)"); return 0; }
+    if (mprotect((void *)rx, CODE_SIZE, PROT_READ | PROT_EXEC) != 0) { JIT_FAIL(GTV_JIT_R_PREPARE_FAILED, "رفض النظام صفحات RX (JIT غير مفعّل)"); return 0; }
     j->rw = (uint8_t *)rw; j->rx = (uint8_t *)rx;
+    jit_reason = GTV_JIT_R_OK;
     JIT_STATUS("مفعّل: المسار القديم (vm_remap)");
     return 1;
 }
@@ -190,19 +203,52 @@ static int jit_alloc_legacy(Jit *j) {
  * وتُعاد للآلات اللاحقة في الجلسة نفسها. */
 static uint8_t *cached_rw, *cached_rx;
 static char cached_status[200];
+static pthread_mutex_t jit_lock = PTHREAD_MUTEX_INITIALIZER;
 static int jit_alloc_once(Jit *j);
 static int jit_alloc(Jit *j) {
-    if (jit_mode == 3) { JIT_STATUS("معطّل من الإعدادات"); return 0; }
-    if (cached_rx) { j->rw = cached_rw; j->rx = cached_rx; JIT_STATUS("%s", cached_status); return 1; }
-    if (!jit_alloc_once(j)) return 0;
-    cached_rw = j->rw; cached_rx = j->rx;
-    snprintf(cached_status, sizeof cached_status, "%s", jit_status_buf);
-    return 1;
+    if (jit_mode == 3) { JIT_FAIL(GTV_JIT_R_DISABLED, "معطّل من الإعدادات"); return 0; }
+    pthread_mutex_lock(&jit_lock);
+    int ok = 1;
+    if (cached_rx) { j->rw = cached_rw; j->rx = cached_rx; JIT_STATUS("%s", cached_status); jit_reason = GTV_JIT_R_OK; }
+    else if (jit_alloc_once(j)) {
+        cached_rw = j->rw; cached_rx = j->rx;
+        snprintf(cached_status, sizeof cached_status, "%s", jit_status_buf);
+    } else ok = 0;
+    pthread_mutex_unlock(&jit_lock);
+    return ok;
+}
+
+int gtv_jit_ready(void) { return cached_rx != NULL; }
+
+int gtv_jit_debug_state(void) {
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    return (cs_debugged() ? 1 : 0) | (ptraced_now() ? 2 : 0);
+#else
+    return 0;
+#endif
+}
+
+/* تجهيز مبكر لمنطقة التنفيذ: يُستدعى عند فتح التطبيق (من خيط خلفي) ما دام المصحّح مرفقًا،
+ * لأن StikDebug قد يُغلق في الخلفية قبل أن يضغط المستخدم «تشغيل»، فيضيع الاتصال.
+ * wait_ms: مدة انتظار إرفاق المصحّح (مسار التفعيل المدمج)؛ 0 = لا انتظار. */
+int gtv_jit_prewarm(int wait_ms) {
+    if (cached_rx) return 1;
+    if (jit_mode == 3) { JIT_FAIL(GTV_JIT_R_DISABLED, "معطّل من الإعدادات"); return 0; }
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    for (int waited = 0; !ptraced_now() && waited < wait_ms; waited += 50) usleep(50 * 1000);
+    if (!cs_debugged()) { JIT_FAIL(GTV_JIT_R_NOT_DEBUGGED, "غير مفعّل: لم يُرفق أي مصحّح بالتطبيق"); return 0; }
+    if (os_major() >= 26 && jit_mode != 2 && !ptraced_now()) {
+        JIT_FAIL(GTV_JIT_R_NOT_TRACED, "TXM: أُرفق مصحّح ثم فُصل دون سكربت (شُغّل التطبيق دون universal.js، أو انقطع الاتصال)");
+        return 0;
+    }
+#endif
+    Jit tmp; memset(&tmp, 0, sizeof tmp);
+    return jit_alloc(&tmp);
 }
 static int jit_alloc_once(Jit *j) {
 #if defined(__APPLE__)
 #if TARGET_OS_IPHONE
-    if (!cs_debugged()) { JIT_STATUS("غير مفعّل: افتح التطبيق من StikDebug لتفعيل JIT"); return 0; }
+    if (!cs_debugged()) { JIT_FAIL(GTV_JIT_R_NOT_DEBUGGED, "غير مفعّل: لم يُرفق أي مصحّح بالتطبيق"); return 0; }
     if (jit_mode == 1) return jit_alloc_txm(j);
     if (jit_mode == 2) return jit_alloc_legacy(j);
     /* تلقائي: TXM في iOS 26 فما فوق، ثم المسار القديم */
@@ -939,6 +985,10 @@ void jit_stats(Machine *m) {
 
 void gtv_set_jit_mode(int mode) { (void)mode; }
 const char *gtv_jit_status(void) { return "غير متاح: المضيف ليس ARM64"; }
+int gtv_jit_reason(void) { return GTV_JIT_R_UNSUPPORTED; }
+int gtv_jit_prewarm(int wait_ms) { (void)wait_ms; return 0; }
+int gtv_jit_ready(void) { return 0; }
+int gtv_jit_debug_state(void) { return 0; }
 
 void *jit_create(Machine *m) { (void)m; return NULL; }
 int jit_page_is_code(Machine *m, uint64_t pa) { (void)m; (void)pa; return 0; }

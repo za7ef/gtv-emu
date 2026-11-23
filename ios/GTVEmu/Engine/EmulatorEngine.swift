@@ -94,6 +94,12 @@ final class EmulatorEngine: ObservableObject {
 
     var isRunning: Bool { state == .running }
 
+    /// تحديث حالة JIT المعروضة بعد التجهيز المبكر أو محاولة تفعيل
+    func refreshJITStatus() {
+        jitStatus = String(cString: gtv_jit_status())
+        if !isRunning { jitActive = gtv_jit_ready() != 0 }
+    }
+
     // MARK: - التشغيل والإيقاف
 
     func start(_ req: BootRequest) {

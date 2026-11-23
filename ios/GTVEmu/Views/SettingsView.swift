@@ -1,5 +1,6 @@
-// الإعدادات: حالة JIT، وخلف «الخيارات المتقدمة»: الذاكرة والمعالجات ووضع JIT ومصدر الصور والطرفية وإدارة الملفات.
+// الإعدادات: تفعيل JIT (المدمج بملف الاقتران أو عبر StikDebug) وحالته، وخلف «الخيارات المتقدمة»: الذاكرة والمعالجات ووضع JIT ومصدر الصور والطرفية وإدارة الملفات.
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @AppStorage("ramMB") private var ramMB = 1024
@@ -12,18 +13,64 @@ struct SettingsView: View {
     @AppStorage("manifestURL") private var manifestURL = ""
     @AppStorage(UsageStats.enabledKey) private var usageStats = true
     @ObservedObject private var engine = EmulatorEngine.shared
+    @ObservedObject private var jit = JITManager.shared
+    @AppStorage(JITManager.methodKey) private var jitMethod = JITManager.Method.builtIn.rawValue
+    @AppStorage(JITManager.autoKey) private var jitAuto = true
+    @State private var showImporter = false
+    @State private var importError: String?
 
     private var physicalGB: Double { Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824 }
 
     @Environment(\.dismiss) private var dismiss
     @State private var showAdvanced = false
 
+    private var isWorking: Bool { if case .working = jit.phase { return true }; return false }
+
+    private var pairingText: String {
+        guard jit.hasPairing else { return "غير موجود" }
+        if let d = jit.pairingDate { return "مستورد " + d.formatted(date: .abbreviated, time: .omitted) }
+        return "مستورد"
+    }
+
     var body: some View {
         Form {
             Section {
-                LabeledContent("حالة JIT", value: engine.jitStatus.isEmpty ? "تُفحص عند التشغيل" : engine.jitStatus)
-            } header: { Text("السرعة") } footer: {
-                Text("لتسريع المحاكاة على iOS 26: افتح التطبيق من StikDebug، واختر له سكربت universal.js يدويًا من قائمة السكربتات. بدونه يعمل التطبيق أبطأ، لكنه يعمل.")
+                LabeledContent("حالة JIT") {
+                    Text(jit.summary).multilineTextAlignment(.trailing)
+                        .foregroundStyle(jit.isReady ? Color.yellow : Color.secondary)
+                }
+                if !jit.detail.isEmpty {
+                    Text(jit.detail).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+                }
+                Picker("طريقة التفعيل", selection: $jitMethod) {
+                    ForEach(JITManager.Method.allCases) { Text($0.title).tag($0.rawValue) }
+                }
+                if jitMethod == JITManager.Method.builtIn.rawValue {
+                    Button { showImporter = true } label: {
+                        Label(jit.hasPairing ? "استبدال ملف الاقتران" : "استيراد ملف الاقتران", systemImage: "doc.badge.plus")
+                    }
+                    LabeledContent("ملف الاقتران", value: pairingText)
+                    if let importError { Text(importError).font(.footnote).foregroundStyle(.red) }
+                    Toggle("التفعيل تلقائيًا عند فتح التطبيق", isOn: $jitAuto)
+                    if let r = HelperLauncher.unavailableReason { Text(r).font(.footnote).foregroundStyle(.orange) }
+                }
+                Button { jit.enable() } label: { Label("تفعيل JIT الآن", systemImage: "bolt") }
+                    .disabled(jit.isReady || isWorking)
+                if jitMethod == JITManager.Method.builtIn.rawValue && jit.hasPairing {
+                    Button { jit.checkConnection() } label: { Label("فحص الاتصال وصورة المطوّر", systemImage: "antenna.radiowaves.left.and.right") }
+                        .disabled(isWorking)
+                }
+                NavigationLink { JITGuideView() } label: { Label("طريقة تفعيل JIT خطوة بخطوة", systemImage: "list.number") }
+            } header: { Text("السرعة (JIT)") } footer: {
+                Text("المترجم الفوري يسرّع المحاكاة كثيرًا. بدونه يعمل التطبيق بالمفسّر، وهو أبطأ لكنه يعمل دائمًا. التفعيل المدمج يحتاج تشغيل LocalDevVPN أو StosVPN وملف اقتران لهذا الجهاز.")
+            }
+            .fileImporter(isPresented: $showImporter, allowedContentTypes: [.item]) { result in
+                switch result {
+                case .success(let url):
+                    do { try jit.importPairing(from: url); importError = nil }
+                    catch { importError = error.localizedDescription }
+                case .failure(let e): importError = e.localizedDescription
+                }
             }
 
             Section {
@@ -55,8 +102,13 @@ struct SettingsView: View {
                     ForEach(JITMode.allCases) { Text($0.title).tag($0.rawValue) }
                 }
                 LabeledContent("آخر نتيجة", value: engine.jitStatus)
+                LabeledContent("TXM", value: jit.txmPresent.map { $0 ? "موجود" : "غير موجود" } ?? "غير معروف")
+                if jit.hasPairing {
+                    Button("حذف نسخة صورة المطوّر (DDI)") { jit.resetDDI() }
+                    Button("حذف ملف الاقتران", role: .destructive) { jit.removePairing() }
+                }
             } header: { Text("المترجم الفوري") } footer: {
-                Text("لتفعيل JIT على iOS 26 وما بعده: شغّل التطبيق من StikDebug مع سكربت universal.js. بدون مصحّح مرفق يعمل المفسّر وحده، وهو أبطأ بكثير لكنه يعمل دائمًا.")
+                Text("يُطلب الآن تجهيز منطقة التنفيذ فور إرفاق المصحّح عند فتح التطبيق، ثم يُفصل المصحّح، فلا يلزم إبقاء StikDebug مفتوحًا حتى تشغيل النظام.")
             }
 
             Section {
@@ -89,6 +141,7 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("الإعدادات")
+        .onChange(of: jitMethod) { _, _ in jit.objectWillChange.send() }
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("تم") { dismiss() } } }
     }
 }
