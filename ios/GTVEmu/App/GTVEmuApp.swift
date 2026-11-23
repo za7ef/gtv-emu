@@ -29,6 +29,7 @@ struct GTVEmuApp: App {
                     .environment(\.layoutDirection, .rightToLeft)
                     .preferredColorScheme(.dark)
             }
+            .onOpenURL { url in JITManager.shared.handleOpenURL(url) }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { JITManager.shared.onBecameActive() }
             }

@@ -28,8 +28,9 @@ struct SettingsView: View {
 
     private var pairingText: String {
         guard jit.hasPairing else { return "غير موجود" }
-        if let d = jit.pairingDate { return "مستورد " + d.formatted(date: .abbreviated, time: .omitted) }
-        return "مستورد"
+        let kind = jit.pairingKind?.title ?? "غير معروف"
+        if let d = jit.pairingDate { return kind + "، " + d.formatted(date: .abbreviated, time: .omitted) }
+        return kind
     }
 
     var body: some View {
@@ -49,6 +50,10 @@ struct SettingsView: View {
                     Button { showImporter = true } label: {
                         Label(jit.hasPairing ? "استبدال ملف الاقتران" : "استيراد ملف الاقتران", systemImage: "doc.badge.plus")
                     }
+                    Button {
+                        do { try jit.importPairingFromPasteboard(); importError = nil }
+                        catch { importError = error.localizedDescription }
+                    } label: { Label("لصق ملف الاقتران من الحافظة", systemImage: "doc.on.clipboard") }
                     LabeledContent("ملف الاقتران", value: pairingText)
                     if let importError { Text(importError).font(.footnote).foregroundStyle(.red) }
                     Toggle("التفعيل تلقائيًا عند فتح التطبيق", isOn: $jitAuto)
@@ -62,15 +67,15 @@ struct SettingsView: View {
                 }
                 NavigationLink { JITGuideView() } label: { Label("طريقة تفعيل JIT خطوة بخطوة", systemImage: "list.number") }
             } header: { Text("السرعة (JIT)") } footer: {
-                Text("المترجم الفوري يسرّع المحاكاة كثيرًا. بدونه يعمل التطبيق بالمفسّر، وهو أبطأ لكنه يعمل دائمًا. التفعيل المدمج يحتاج تشغيل LocalDevVPN أو StosVPN وملف اقتران لهذا الجهاز.")
+                Text("المترجم الفوري يسرّع المحاكاة كثيرًا. بدونه يعمل التطبيق بالمفسّر، وهو أبطأ لكنه يعمل دائمًا. التفعيل المدمج يحتاج تشغيل LocalDevVPN أو StosVPN وملف اقتران RemotePairing لهذا الجهاز (مثل rp_pairing_file.plist من StikDebug). إن تعذّر اختيار الملف: انسخه إلى «ملفات ← على جهازي ← GTV Emu»، أو شاركه من تطبيق الملفات إلى GTV Emu، فيُستورد تلقائيًا.")
             }
-            .fileImporter(isPresented: $showImporter, allowedContentTypes: [.item]) { result in
-                switch result {
-                case .success(let url):
+            .sheet(isPresented: $showImporter) {
+                PairingPicker(onPick: { url in
+                    showImporter = false
                     do { try jit.importPairing(from: url); importError = nil }
                     catch { importError = error.localizedDescription }
-                case .failure(let e): importError = e.localizedDescription
-                }
+                }, onCancel: { showImporter = false })
+                .ignoresSafeArea()
             }
 
             Section {

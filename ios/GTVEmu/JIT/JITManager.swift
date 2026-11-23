@@ -70,31 +70,73 @@ final class JITManager: ObservableObject {
         return dir.appendingPathComponent("pairingFile.plist")
     }
 
+    /// نوع ملف الاقتران المحفوظ
+    enum PairingKind: String {
+        /// RemotePairing (iOS 17 وما بعده): المفاتيح identifier وpublic_key وprivate_key، وهو ما يستخدمه StikDebug 3
+        case remotePairing
+        /// اقتران lockdown التقليدي: HostID وHostPrivateKey وغيرهما
+        case lockdown
+        var title: String {
+            switch self {
+            case .remotePairing: return "RemotePairing"
+            case .lockdown: return "Lockdown (تقليدي)"
+            }
+        }
+    }
+
+    @Published private(set) var pairingKind: PairingKind?
+
     func refreshPairing() {
         let attrs = try? FileManager.default.attributesOfItem(atPath: Self.pairingURL.path)
         hasPairing = attrs != nil
         pairingDate = attrs?[.modificationDate] as? Date
+        pairingKind = (try? Data(contentsOf: Self.pairingURL)).flatMap { try? Self.classify($0) }
     }
 
     enum PairingError: LocalizedError {
-        case unreadable, notPlist, notPairing
+        case unreadable, notPlist, notPairing, lockdownOnly
         var errorDescription: String? {
             switch self {
             case .unreadable: return "تعذّرت قراءة الملف."
-            case .notPlist: return "الملف ليس بصيغة plist؛ اختر ملف ‎.mobiledevicepairing أو ‎.plist."
-            case .notPairing: return "الملف لا يحتوي مفاتيح الاقتران (HostID وHostPrivateKey)؛ أنشئ ملف اقتران جديدًا لهذا الجهاز."
+            case .notPlist: return "الملف ليس بصيغة plist؛ اختر ملف ‎.plist أو ‎.mobiledevicepairing."
+            case .notPairing: return "الملف لا يحتوي مفاتيح اقتران معروفة (identifier وpublic_key وprivate_key)."
+            case .lockdownOnly: return "هذا ملف اقتران تقليدي (lockdown)، والتفعيل المدمج يحتاج ملف RemotePairing (مثل rp_pairing_file.plist الذي يستخدمه StikDebug 3). استخدم ذلك الملف، أو اختر طريقة «عبر StikDebug»."
             }
         }
+    }
+
+    /// يحدد نوع الملف من محتواه لا من امتداده
+    static func classify(_ data: Data) throws -> PairingKind {
+        guard let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+            throw PairingError.notPlist
+        }
+        if plist["identifier"] is String,
+           (plist["public_key"] as? Data)?.count == 32,
+           (plist["private_key"] as? Data)?.count == 32 {
+            return .remotePairing
+        }
+        if plist["HostID"] != nil, plist["HostPrivateKey"] != nil { return .lockdown }
+        throw PairingError.notPairing
     }
 
     func importPairing(from url: URL) throws {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        guard let data = try? Data(contentsOf: url) else { throw PairingError.unreadable }
-        guard let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
-            throw PairingError.notPlist
+        var data: Data?
+        // قد يكون الملف في iCloud أو مزوّد ملفات خارجي، فتُقرأ نسخة منسّقة
+        var coordError: NSError?
+        NSFileCoordinator().coordinate(readingItemAt: url, options: .withoutChanges, error: &coordError) { u in
+            data = try? Data(contentsOf: u)
         }
-        guard plist["HostID"] != nil, plist["HostPrivateKey"] != nil else { throw PairingError.notPairing }
+        if data == nil { data = try? Data(contentsOf: url) }
+        guard let data else { throw PairingError.unreadable }
+        try importPairing(data: data)
+    }
+
+    /// استيراد من بيانات مباشرة (الحافظة، أو ملف مشارَك)
+    func importPairing(data: Data) throws {
+        let kind = try Self.classify(data)
+        guard kind == .remotePairing else { throw PairingError.lockdownOnly }
         let dest = Self.pairingURL
         var dir = dest.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -103,6 +145,50 @@ final class JITManager: ObservableObject {
         try data.write(to: dest, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         refreshPairing()
         if case .failed = phase { phase = .idle; detail = "" }
+    }
+
+    /// استيراد من الحافظة: نص plist منسوخ، أو بيانات ملف
+    func importPairingFromPasteboard() throws {
+        let pb = UIPasteboard.general
+        if let d = pb.data(forPasteboardType: "com.apple.property-list") { try importPairing(data: d); return }
+        if let s = pb.string, let d = s.data(using: .utf8) { try importPairing(data: d); return }
+        throw PairingError.unreadable
+    }
+
+    /// ملفات تُركت في مجلد التطبيق (ملفات ← على جهازي ← GTV Emu) أو وصلت عبر «فتح في»؛
+    /// يُستورد أول ملف RemotePairing صالح ثم يُحذف من المجلد المكشوف
+    @discardableResult
+    func scanInbox() -> Bool {
+        let fm = FileManager.default
+        let docs = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let dirs = [docs, docs.appendingPathComponent("Inbox")]
+        for dir in dirs {
+            guard let items = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.fileSizeKey]) else { continue }
+            for u in items where ["plist", "mobiledevicepairing"].contains(u.pathExtension.lowercased()) {
+                guard let size = try? u.resourceValues(forKeys: [.fileSizeKey]).fileSize, size < 64 * 1024,
+                      let d = try? Data(contentsOf: u), (try? Self.classify(d)) == .remotePairing else { continue }
+                if (try? importPairing(data: d)) != nil {
+                    try? fm.removeItem(at: u)
+                    detail = "استُورد ملف الاقتران \(u.lastPathComponent) وحُذفت نسخته من مجلد التطبيق."
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    /// ملف فُتح بالتطبيق من «مشاركة ← GTV Emu»
+    func handleOpenURL(_ url: URL) {
+        let ext = url.pathExtension.lowercased()
+        guard ext == "plist" || ext == "mobiledevicepairing" else { return }
+        do {
+            try importPairing(from: url)
+            detail = "استُورد ملف الاقتران (\(pairingKind?.title ?? ""))."
+            if url.path.contains("/Inbox/") { try? FileManager.default.removeItem(at: url) }
+            if method == .builtIn, !isReady, autoEnable { enable() }
+        } catch {
+            fail(error.localizedDescription)
+        }
     }
 
     func removePairing() {
@@ -120,7 +206,7 @@ final class JITManager: ObservableObject {
             // فُتح التطبيق من StikDebug والمصحّح ما يزال مرفقًا: تُجهَّز المنطقة فورًا قبل أي شيء آخر
             phase = .working("تجهيز منطقة التنفيذ…")
             waitAndPrewarm(seconds: 5)
-        } else if method == .builtIn, autoEnable, hasPairing, HelperLauncher.unavailableReason == nil {
+        } else if (scanInbox() || hasPairing), method == .builtIn, autoEnable, HelperLauncher.unavailableReason == nil {
             enable()
         } else {
             syncEngine()
@@ -130,6 +216,9 @@ final class JITManager: ObservableObject {
     /// عند العودة إلى التطبيق (مثلًا بعد StikDebug)
     func onBecameActive() {
         guard !isReady, jitMode != .off else { return }
+        if gtv_jit_debug_state() & 2 == 0, scanInbox(), method == .builtIn, autoEnable {
+            if case .working = phase {} else { enable(); return }
+        }
         if case .working = phase { return }
         if gtv_jit_debug_state() & 2 != 0 {
             phase = .working("تجهيز منطقة التنفيذ…")
@@ -274,7 +363,7 @@ final class JITManager: ObservableObject {
         switch kind {
         case .ok: return "تم."
         case .vpnUnreachable: return "تعذّر الوصول إلى الجهاز: شغّل LocalDevVPN أو StosVPN، وتأكد من اتصال Wi‑Fi، ثم أعد المحاولة."
-        case .pairingInvalid: return "ملف الاقتران غير صالح أو انتهت صلاحيته: أنشئ ملفًا جديدًا لهذا الجهاز ثم استورده."
+        case .pairingInvalid: return "ملف الاقتران غير صالح أو انتهت صلاحيته: استورد ملف RemotePairing حديثًا لهذا الجهاز (مثل rp_pairing_file.plist من StikDebug)."
         case .ddiFailed: return "تعذّر تجهيز صورة المطوّر (DDI): تحقق من الإنترنت، أو احذف نسخة الصورة من الإعدادات وأعد المحاولة."
         case .attachFailed: return "تعذّر إرفاق المصحّح بالتطبيق: تأكد أن التثبيت يحتفظ بصلاحية get-task-allow."
         case .scriptFailed: return "أُرفق المصحّح لكن سكربت التفعيل فشل."
