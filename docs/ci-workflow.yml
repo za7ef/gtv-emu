@@ -10,6 +10,8 @@ jobs:
         run: CC=gcc ./build.sh
       - name: اختبارات الوحدة
         run: gcc -O1 -w -o unit tests/unit_test.c core/simd.c core/devices.c core/virtio.c core/netstack.c core/bootimg.c core/fdt.c core/jit.c -lm -lpthread && ./unit
+      - name: اختبار تجهيز صورة Android TV
+        run: ./tests/tv_prep_fsck_test.sh
       - name: اختبار الإقلاع
         run: ./tests/boot_test.sh
       - name: اختبار الواجهة المضمِّنة (التي يستخدمها تطبيق iOS)

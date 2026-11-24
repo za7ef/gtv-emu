@@ -25,12 +25,21 @@ for d in $SYS $VEN; do [ -b $d ] || mdev -s; done
 
 ctx() { printf '%s\0' "u:object_r:$1:s0" > $W/ctx.$1; echo $W/ctx.$1; }
 
+# e2fsck returns 1 when it repaired errors; accept 0/1 under `set -e`.
+fsck_checked() {
+  if e2fsck "$@"; then
+    FSCK_RC=0
+  else
+    FSCK_RC=$?
+  fi
+  [ "$FSCK_RC" -le 1 ]
+}
+
 # ===== 1) vendor =====
 step "vendor: resize"
-resize2fs -f $VEN >/dev/null 2>&1 || fail "resize2fs vendor"
+resize2fs -f "$VEN" >/dev/null 2>&1 || fail "resize2fs vendor"
 step "vendor: unshare blocks"
-e2fsck -fy -E unshare_blocks $VEN >/dev/null 2>&1; rc=$?
-[ $rc -le 1 ] || fail "e2fsck vendor rc=$rc"
+fsck_checked -fy -E unshare_blocks "$VEN" >/dev/null 2>&1 || fail "e2fsck vendor rc=$FSCK_RC"
 
 dbg() { debugfs -w -R "$1" $VEN >/dev/null 2>&1; }
 get() { debugfs -R "dump $1 $2" $VEN >/dev/null 2>&1 && [ -s "$2" ] || fail "cannot read $1"; }
@@ -92,8 +101,7 @@ put $P/cf/libminigbm_gralloc.so /lib64/libminigbm_gralloc.so $SP
 put $P/cf/libc++.so /lib64/libc++.so $SP
 put $P/cf/libdmabufheap.so /lib64/libdmabufheap.so $SP
 put $P/cf/mapper.minigbm.xml /etc/vintf/manifest/mapper.minigbm.xml $CF
-e2fsck -fy $VEN >/dev/null 2>&1; rc=$?
-[ $rc -le 1 ] || fail "vendor check rc=$rc"
+fsck_checked -fy "$VEN" >/dev/null 2>&1 || fail "vendor check rc=$FSCK_RC"
 
 # ===== 2) system: SELinux =====
 step "system: selinux"
