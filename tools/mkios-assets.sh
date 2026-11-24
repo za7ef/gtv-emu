@@ -18,7 +18,11 @@ mkdir -p "$WORK" && cd "$WORK"
 
 # ===== Alpine: نواة linux-virt وbusybox ووحدات virtio وaplay =====
 ALP=https://dl-cdn.alpinelinux.org/alpine/v3.22/main/aarch64
-KVER_APK=linux-virt-6.12.117-r0.apk
+# Resolve the current linux-virt package from Alpine's index so the pinned
+# release build does not fail when a kernel revision is rotated out.
+KVER=$(curl -fsSL "$ALP/APKINDEX.tar.gz" | tar -xzO APKINDEX | awk -F: '$1 == "P" && $2 == "linux-virt" { getline; if ($1 == "V") version=$2 } END { print version }')
+[ -n "$KVER" ] || { echo "Could not resolve linux-virt version" >&2; exit 1; }
+KVER_APK="linux-virt-$KVER.apk"
 BB_APK=busybox-static-1.37.0-r20.apk
 SND_APKS="alsa-lib-1.2.14-r0.apk alsa-utils-1.2.14-r0.apk musl-1.2.5-r13.apk"
 [ -f "$KVER_APK" ] || curl -sfO "$ALP/$KVER_APK"
