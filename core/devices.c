@@ -463,7 +463,7 @@ void uart_write(Machine *m, uint64_t off, int size, uint64_t v) {
     case 0x00: { char ch = v & 0xFF;
         if (gtv_host && gtv_host->console_out) gtv_host->console_out(gtv_host->ctx, &ch, 1);
         else if (write(1, &ch, 1) < 0) {}
-        UART *uu = m->uart; if (uu->last_tx == '#' && ch == ' ') uu->prompt_seen = 1; uu->last_tx = ch;
+        UART *uu = m->uart; if ((uu->last_tx == '#' || uu->last_tx == '$') && ch == ' ') uu->prompt_seen = 1; uu->last_tx = ch;
         uart_irq(m); return; }
     case 0x24: u->ibrd = v; return;
     case 0x28: u->fbrd = v; return;
