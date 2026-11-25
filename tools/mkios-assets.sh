@@ -138,7 +138,7 @@ if len(sys.argv) > 2 and sys.argv[2] == "1":
         "note": "تجريبي: يصل إلى شعار الإقلاع، وواجهة التلفاز لم تكتمل بعد",
         "description": "نظام Android TV 16 الرسمي من Google (API 36). يُنزَّل من خوادم Google مباشرة، ثم يُجهَّز على الجهاز: استخراج الأقسام وإضافة مكدّس رسوميات برمجي من AOSP. يحتاج JIT ونحو 3 غيغابايت من المساحة.",
         "notice": "صورة النظام مملوكة لشركة Google وتخضع لترخيص Android SDK. تُنزَّل من dl.google.com إلى جهازك مباشرة، ولا يعيد هذا التطبيق توزيعها.",
-        "ramMB": 1536, "cores": 2,
+        "ramMB": 2048, "cores": 2,
         "files": [
             {"role": "source", "name": "android-tv-36_r04.zip", "url": "https://dl.google.com/android/repository/sys-img/android-tv/arm64-v8a-36_r04.zip",
              "size": 970375839, "sha256": "7398e2f00e5df28332027d5a131fcbefb8d5823bc7103a65a035575d271ffcca", "transient": True},
